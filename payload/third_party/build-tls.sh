@@ -93,6 +93,7 @@ build_openssl() {
 		cd "$src/openssl-$OPENSSL_VERSION"
 		perl Configure no-shared no-tests no-asm no-docs no-afalgeng no-padlockeng \
 			--prefix="$prefix" --openssldir="$prefix/ssl" --libdir=lib \
+			no-module \
 			CC="$PS5_PAYLOAD_SDK/bin/prospero-clang" \
 			AR="$PS5_PAYLOAD_SDK/bin/prospero-ar" \
 			RANLIB="$PS5_PAYLOAD_SDK/bin/prospero-ranlib" \
