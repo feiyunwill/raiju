@@ -43,11 +43,9 @@ Single ELF, sent through the existing ELF loader (port 9021).
 - Ends through `payload_exit()`. Returning from `main` hands the hijacked process back to its C++ teardown, which dies with an uncaught `system_error` a few milliseconds later (#2).
 
 **Engine: aria2**
-- Preferred: `motrixapp/aria2` (Motrix's fork: 64 connections per server, SQLite session persistence). Fallback: upstream aria2 1.37+.
+- Upstream aria2 1.37.0, with the connection cap patched — one hunk, `payload/third_party/patches/aria2-connections.patch`. Not the `motrixapp/aria2` fork: its headline feature is that one integer inside 107 changed files, and its SQLite session persistence is redundant because Raiju owns job state and the engine is an executor (ADR 0001).
 - Build: static, `--without-gnutls --with-openssl --with-libz --without-libxml2 --without-sqlite3` for M0; add c-ares, then libxml2/sqlite later.
-- Integration mode (decide in M0, record as ADR):
-  - **A. Embedded `libaria2`** (`--enable-libaria2`) running in a thread inside `raiju.elf`, with `enable-rpc=true` set in its options. One process, one ELF.
-  - **B. Standalone `aria2c`** started by the supervisor. Simpler build, but needs process spawning to work from a payload.
+- Integration mode: **embedded `libaria2`** (`--enable-libaria2`) in a thread inside `raiju.elf`, with `enable-rpc=true` on loopback (ADR 0001). A standalone `aria2c` cannot work — a payload cannot spawn a program it built, because the SDK's binaries are `ET_DYN` with no `PT_INTERP` and `prospero-clang -static` is rejected for the PS5 target — so there is nothing left to choose between.
 - aria2 runs a single event loop on FreeBSD `kqueue`. TLS on a Zen 2 core with AES-NI handles well over 1 Gbps, so one thread is not the bottleneck.
 
 **Processor (post-download pipeline)**
@@ -231,9 +229,9 @@ Motrix's speed is aria2 with good defaults. Raiju ships the same tuning, editabl
 
 | Option | Raiju default | Why |
 |---|---|---|
-| `max-connection-per-server` | 16 (64 with the motrix fork) | Parallel TCP streams beat per-connection throttling |
-| `split` | 16 (64 with the fork) | Pieces in flight per task |
-| `min-split-size` | 10M | Don't split small files into tiny ranges |
+| `max-connection-per-server` | 16 (the patch allows up to 1024) | Parallel TCP streams beat per-connection throttling |
+| `split` | 16 | Pieces in flight per task |
+| `min-split-size` | 10M | Don't split small files into tiny ranges. It also caps parallelism — pieces = size / this — so a file has to be large enough for the connection count asked of it: measured in #4, a 256 MB file at the 20 MB default split about twelve ways whatever `split` said |
 | `max-concurrent-downloads` | 5 | |
 | `disk-cache` | 64M | Batches writes; fewer NVMe syncs |
 | `file-allocation` | `falloc` if the PS5 filesystem supports `posix_fallocate`, else `none` | Avoid writing zeros twice; measure in M0 |
@@ -278,8 +276,8 @@ Total time then becomes max(download, extraction) instead of their sum, and the 
 
 ## Persistence
 
-- `save-session=/data/raiju/session/aria2.session`, `save-session-interval=10`, `input-file` = the same file on start, and `force-save=true` so paused and completed tasks survive too.
-- With the motrix fork's SQLite persistence, progress is saved to a database instead. That's an optional upgrade.
+- `save-session=/data/raiju/session/aria2.session`, `save-session-interval=10` and `force-save=true` so paused and completed tasks are written too. The file is a record, not a restore path: measured in #4, a session created with the same `save-session` comes up with nothing to download, and `input-file` does not change that in the embedded mode.
+- **Raiju restores its own jobs.** It re-adds them from `/data/raiju/session/jobs.json`, and each resumes from the piece record in its `<file>.aria2` control file rather than from the bytes on disk — measured, of about 50 MB written before a restart, roughly 34 MB was fetched again. Nothing else survives a payload restart, which is why the job store is the source of truth and the engine an executor (ADR 0001).
 - The supervisor also forces a session save on shutdown signals and before rest mode, if a suspend notification is available.
 
 ## Power states
@@ -288,8 +286,8 @@ Total time then becomes max(download, extraction) instead of their sum, and the 
 |---|---|
 | On, screen on or off | Full speed |
 | Idle timer about to trigger rest mode | **Keep-awake:** while any task is active, the supervisor periodically resets the idle timer (PS4 had `sceSystemServicePowerTick`; the PS5 equivalent needs confirming in M1). Once the queue is empty, the console sleeps normally. |
-| Rest mode | Userland is suspended, so **no downloading**. On resume: if the payload survived, aria2 retries its connections and continues. If not, re-send the ELF and the session restores. |
-| Off / reboot | Payload is gone. Re-send the ELF and the session restores. |
+| Rest mode | Userland is suspended, so **no downloading**. On resume: if the payload survived, aria2 retries its connections and continues. If not, re-send the ELF and Raiju re-adds its jobs, which resume from their control files. |
+| Off / reboot | Payload is gone. Re-send the ELF and Raiju re-adds its jobs. |
 | Wake from network (research) | The Remote Play wake packet (UDP 9302 on PS5) plus a registration credential can wake the console. The payload must still be re-sent or auto-loaded afterwards. |
 
 Downloading during rest mode itself isn't possible from a payload.
@@ -311,8 +309,8 @@ raiju/
 │  ├─ src/
 │  ├─ processor/     # portable C11 pipeline stages; `make -C payload/processor test` runs host unit tests (needs libarchive and pkg-config), `make -C payload/processor sanitize` runs them under ASan and UBSan
 │  ├─ gateway/       # portable C11 HTTP gateway + pairing; `make -C payload/gateway test` runs host unit and aria2 integration tests, `make -C payload/gateway sanitize` runs them under ASan and UBSan; embeds `ui/dist` (needs a local `aria2c` for the integration test)
-│  ├─ third_party/   # build scripts plus the fetched, gitignored sources: aria2 (fork), libarchive, openssl, zlib, zstd, xz, c-ares, civetweb
-│  ├─ spikes/        # M0 spike payloads, one directory per question: privileges (#2), tls (#3)
+│  ├─ third_party/   # build scripts plus the fetched, gitignored sources: aria2 (upstream, with the connection patch), libarchive, openssl, zlib, zstd, xz, c-ares, civetweb
+│  ├─ spikes/        # M0 spike payloads, one directory per question: privileges (#2, #46), tls (#3), the filesystem and ShadowMountPlus (#7), spawning and embedding the engine (#4, #5), connection counting and session restore (#4)
 │  └─ Makefile
 ├─ ui/               # Vite + React + shadcn SPA (shared by all clients)
 ├─ companion/        # Tauri 2 desktop app (Rust), wraps ui/ (M2)
@@ -324,7 +322,7 @@ raiju/
 
 Build: `make ui` (outputs `ui/dist`) → `make payload` (embeds `ui/dist` and outputs `raiju.elf`) → `make send PS5_HOST=…` (pushes to port 9021).
 
-The console needs its own copies of the third-party libraries, so `payload/third_party/build-tls.sh` pins zlib, OpenSSL 3 and a CA bundle by sha256, cross-compiles them statically into `payload/third_party/ps5/` (gitignored), and runs in CI as part of the payload job. On macOS the SDK's wrappers reach LLVM through `llvm-config`, so `LLVM_CONFIG` has to point at `llvm@18`; CI installs `llvm-18`, which is already on `PATH`.
+The console needs its own copies of the third-party libraries, so `payload/third_party/build-tls.sh` pins zlib, OpenSSL 3 and a CA bundle by sha256, cross-compiles them statically into `payload/third_party/ps5/` (gitignored), and runs in CI as part of the payload job. On macOS the SDK's wrappers reach LLVM through `llvm-config`, so `LLVM_CONFIG` has to point at `llvm@18`; CI installs `llvm-18`, which is already on `PATH`. `build-aria2.sh` follows the same shape for aria2, applying the connection patch after it unpacks upstream.
 
 ## Licensing
 
@@ -337,9 +335,9 @@ Raiju is **GPL-3.0-or-later**, matching ps5-payload-dev projects such as ftpsrv 
 
 ## Risks and M0 spikes
 
-1. **C++ runtime and threading in the payload SDK** for aria2. Spike: get `aria2c --version` to run on the console.
+1. **C++ runtime and threading in the payload SDK** for aria2. Settled (#4): the engine builds and runs embedded in the payload.
 2. **OpenSSL build for the PS5 target**, plus a CA bundle shipped at `/data/raiju/ca.pem`.
-3. **Embedded libaria2 vs standalone** (integration mode A vs B).
+3. **Embedded libaria2 vs standalone** (integration mode A vs B). Settled: embedded (ADR 0001) — a payload cannot spawn a program it built, so there was no mode B to have.
 4. **`posix_fallocate` support on `/data`**, and sustained write speed.
 5. **Keep-awake API**, and whether the payload survives rest mode.
 6. **libarchive build and throughput** on the PS5 for 7z LZMA2, zip and tar.zst, measured on a real 50 GB dump.
