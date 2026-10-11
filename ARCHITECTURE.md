@@ -86,7 +86,7 @@ stateDiagram-v2
    | rar | `52 61 72 21 1A 07` |
    | zstd / xz / gzip (tar.*) | `28 B5 2F FD` / `FD 37 7A 58 5A 00` / `1F 8B` |
    | `.exfat` image | `EXFAT   ` at offset 3 |
-   | `.ffpkg` (UFS2) image | UFS2 superblock magic `0x19540119` at offset 65536 + 1372 |
+   | `.ffpkg` (UFS2) image | UFS2 superblock magic `0x19540119` at +1372, searched at 65536, 8192, 0 and 262144 (FreeBSD SBLOCKSEARCH), with `fs_sblockloc` (+1000) equal to the location |
    | `.ffpfs` / `.ffpfsc` | extension + PFS header check |
 
    An image with the wrong header, e.g. an HTML error page saved as `.ffpkg`, fails the job instead of being installed.
@@ -94,7 +94,7 @@ stateDiagram-v2
    **2b. Structural check (images).** exFAT: verify the boot-region checksum (sector 11 of the boot region), that the volume length fits in the file, and the 64 KiB cluster size ShadowMountPlus recommends, warning otherwise. UFS2: check the superblock's block/fragment sizes and that the image size covers the filesystem size.
 
    **2c. Identify the title.** Decide the install name `<TITLE_ID>`:
-   1. Read `sce_sys/param.json` → top-level `titleId`, which must be four uppercase letters and five digits; a malformed document or value counts as missing. For archives, from the entry while extracting. For folder dumps, from disk. For images, read-only through a minimal exFAT/UFS2 reader that only walks root → `sce_sys` → `param.json`. The readers go through a `pread`-style I/O callback, treat every on-disk value as untrusted, cap `param.json` at 1 MiB and each directory at 4 MiB, and reject FAT chains that loop or end early. exFAT names match case-insensitively with ASCII folding only; UFS2 names match exactly, and the superblock must be at 65536 as FreeBSD `newfs` writes it.
+   1. Read `sce_sys/param.json` → top-level `titleId`, which must be four uppercase letters and five digits; a malformed document or value counts as missing. For archives, from the entry while extracting. For folder dumps, from disk. For images, read-only through a minimal exFAT/UFS2 reader that only walks root → `sce_sys` → `param.json`. The readers go through a `pread`-style I/O callback, treat every on-disk value as untrusted, cap `param.json` at 1 MiB and each directory at 4 MiB, and reject FAT chains that loop or end early. exFAT names match case-insensitively with ASCII folding only; UFS2 names match exactly, and the superblock is located like FreeBSD does it: the first of 65536, 8192, 0 and 262144 whose magic matches and whose `fs_sblockloc` equals that location, so backup copies are never mistaken for the primary.
    2. Otherwise, use a regex on the original file or archive name: `(PPSA|CUSA)\d{5}`.
    3. Otherwise, pause the job and ask the user in the UI.
    `param.json`'s display name (`localizedParameters`) is stored with the job for the UI. If (1) and (2) disagree, (1) wins and the UI shows a note.

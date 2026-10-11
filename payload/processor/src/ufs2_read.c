@@ -92,16 +92,22 @@ static bool is_power_of_two(uint32_t value) {
 }
 
 /**
- * Parses the superblock at SBLOCK_UFS2 and checks every field the walk uses,
+ * Finds the primary superblock in FreeBSD's SBLOCKSEARCH order, parses it and checks every field the walk uses,
  * so that later address arithmetic cannot overflow or leave the filesystem.
  */
 static raiju_image_fs_status read_volume(const raiju_image_io *io, ufs2_volume *volume) {
 	uint8_t sb[SB_BYTES];
-	raiju_image_fs_status status = raiju_image_read(io, RAIJU_UFS2_SUPERBLOCK_OFFSET, sb, sizeof sb);
-	if (status != RAIJU_IMAGE_FS_OK) {
-		return status == RAIJU_IMAGE_FS_CORRUPT ? RAIJU_IMAGE_FS_UNSUPPORTED : status;
+	bool found = false;
+	for (size_t i = 0; i < RAIJU_UFS2_SUPERBLOCK_SEARCH_COUNT && !found; i++) {
+		uint32_t location = raiju_ufs2_superblock_search[i];
+		raiju_image_fs_status status = raiju_image_read(io, location, sb, sizeof sb);
+		if (status == RAIJU_IMAGE_FS_IO_ERROR) {
+			return status;
+		}
+		found = status == RAIJU_IMAGE_FS_OK && raiju_read_le32(sb + SB_MAGIC) == RAIJU_UFS2_MAGIC &&
+		        raiju_read_le64(sb + RAIJU_UFS2_SBLOCKLOC_FIELD) == location;
 	}
-	if (raiju_read_le32(sb + SB_MAGIC) != RAIJU_UFS2_MAGIC) {
+	if (!found) {
 		return RAIJU_IMAGE_FS_UNSUPPORTED;
 	}
 	volume->io = io;

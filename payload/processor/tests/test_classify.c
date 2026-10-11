@@ -134,7 +134,50 @@ static void kind_names_are_stable(void) {
 	CHECK_STR(raiju_kind_name(RAIJU_KIND_UNKNOWN), "unknown");
 }
 
+static void ufs2_superblock_is_found_at_every_freebsd_location(void) {
+	static const uint32_t locations[] = {65536u, 8192u, 0u, 262144u};
+	for (size_t i = 0; i < sizeof locations / sizeof locations[0]; i++) {
+		uint8_t *image = calloc(1, RAIJU_PROBE_SIZE);
+		CHECK(image != NULL);
+		fixture_put_ufs2_superblock(image, locations[i], locations[i], 32768, 4096, 16);
+		CHECK_INT(raiju_find_ufs2_superblock(image, RAIJU_PROBE_SIZE), locations[i]);
+		CHECK_INT(raiju_detect_magic(image, RAIJU_PROBE_SIZE), RAIJU_KIND_UFS2);
+		free(image);
+	}
+}
+
+static void ufs2_backup_copy_points_to_primary(void) {
+	uint8_t *image = calloc(1, RAIJU_PROBE_SIZE);
+	CHECK(image != NULL);
+	fixture_put_ufs2_superblock(image, 65536, 8192, 65536, 65536, 16);
+	fixture_put_ufs2_superblock(image, 8192, 8192, 65536, 65536, 16);
+	CHECK_INT(raiju_find_ufs2_superblock(image, RAIJU_PROBE_SIZE), 8192);
+	free(image);
+}
+
+static void ufs2_stray_copy_alone_is_not_an_image(void) {
+	uint8_t *image = calloc(1, RAIJU_PROBE_SIZE);
+	CHECK(image != NULL);
+	fixture_put_ufs2_superblock(image, 65536, 8192, 32768, 4096, 16);
+	CHECK_INT(raiju_find_ufs2_superblock(image, RAIJU_PROBE_SIZE), RAIJU_UFS2_NOT_FOUND);
+	CHECK_INT(raiju_detect_magic(image, RAIJU_PROBE_SIZE), RAIJU_KIND_UNKNOWN);
+	free(image);
+}
+
+static void ufs2_search_respects_buffer_length(void) {
+	uint8_t *image = calloc(1, RAIJU_PROBE_SIZE);
+	CHECK(image != NULL);
+	fixture_put_ufs2_superblock(image, 262144, 262144, 32768, 4096, 16);
+	CHECK_INT(raiju_find_ufs2_superblock(image, RAIJU_PROBE_SIZE - 1), RAIJU_UFS2_NOT_FOUND);
+	CHECK(!raiju_ufs2_superblock_at(NULL, RAIJU_PROBE_SIZE, 0));
+	free(image);
+}
+
 void run_classify_tests(void) {
+	RUN_TEST(ufs2_superblock_is_found_at_every_freebsd_location);
+	RUN_TEST(ufs2_backup_copy_points_to_primary);
+	RUN_TEST(ufs2_stray_copy_alone_is_not_an_image);
+	RUN_TEST(ufs2_search_respects_buffer_length);
 	RUN_TEST(archive_signatures_are_detected);
 	RUN_TEST(archive_extension_does_not_override_magic);
 	RUN_TEST(truncated_signatures_are_unknown);

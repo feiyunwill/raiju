@@ -76,10 +76,30 @@ raiju_kind raiju_detect_magic(const uint8_t *head, size_t head_len) {
 			return sig->kind;
 		}
 	}
-	if (head_len >= RAIJU_UFS2_MAGIC_OFFSET + 4 && raiju_read_le32(head + RAIJU_UFS2_MAGIC_OFFSET) == RAIJU_UFS2_MAGIC) {
+	if (raiju_find_ufs2_superblock(head, head_len) != RAIJU_UFS2_NOT_FOUND) {
 		return RAIJU_KIND_UFS2;
 	}
 	return RAIJU_KIND_UNKNOWN;
+}
+
+const uint32_t raiju_ufs2_superblock_search[RAIJU_UFS2_SUPERBLOCK_SEARCH_COUNT] = {65536u, 8192u, 0u, 262144u};
+
+bool raiju_ufs2_superblock_at(const uint8_t *bytes, size_t len, uint32_t offset) {
+	if (bytes == NULL || len < RAIJU_UFS2_SUPERBLOCK_PROBE || offset > len - RAIJU_UFS2_SUPERBLOCK_PROBE) {
+		return false;
+	}
+	const uint8_t *superblock = bytes + offset;
+	return raiju_read_le32(superblock + RAIJU_UFS2_MAGIC_FIELD) == RAIJU_UFS2_MAGIC &&
+	       raiju_read_le64(superblock + RAIJU_UFS2_SBLOCKLOC_FIELD) == offset;
+}
+
+uint32_t raiju_find_ufs2_superblock(const uint8_t *head, size_t head_len) {
+	for (size_t i = 0; i < RAIJU_UFS2_SUPERBLOCK_SEARCH_COUNT; i++) {
+		if (raiju_ufs2_superblock_at(head, head_len, raiju_ufs2_superblock_search[i])) {
+			return raiju_ufs2_superblock_search[i];
+		}
+	}
+	return RAIJU_UFS2_NOT_FOUND;
 }
 
 raiju_kind raiju_image_kind_from_name(const char *file_name) {

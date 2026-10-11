@@ -161,7 +161,8 @@ static void ufs2_filesystem_larger_than_image_is_truncated(void) {
 
 static void ufs2_wrong_magic_or_short_head_fails(void) {
 	uint8_t *image = fixture_ufs2(RAIJU_PROBE_SIZE, 32768, 4096, 64);
-	CHECK_INT(raiju_check_ufs2(image, RAIJU_PROBE_SIZE - 1, UINT64_MAX).status, RAIJU_IMAGE_SHORT_READ);
+	CHECK_INT(raiju_check_ufs2(image, 65536 + 100, UINT64_MAX).status, RAIJU_IMAGE_SHORT_READ);
+	CHECK_INT(raiju_check_ufs2(image, RAIJU_PROBE_SIZE - 1, UINT64_MAX).status, RAIJU_IMAGE_OK);
 	image[65536 + 1372] ^= 0x01;
 	CHECK_INT(raiju_check_ufs2(image, RAIJU_PROBE_SIZE, UINT64_MAX).status, RAIJU_IMAGE_BAD_SIGNATURE);
 	free(image);

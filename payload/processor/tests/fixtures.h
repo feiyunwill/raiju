@@ -26,6 +26,14 @@ void fixture_exfat_reseal(uint8_t *image, unsigned sector_shift);
 uint8_t *fixture_ufs2(size_t image_len, uint32_t block_size, uint32_t fragment_size, uint64_t fragments);
 
 /**
+ * Same as fixture_ufs2 but places the superblock at location and records
+ * sblockloc in its fs_sblockloc field, so a backup copy can be simulated by
+ * passing a sblockloc that differs from location.
+ */
+void fixture_put_ufs2_superblock(uint8_t *image, size_t location, uint64_t sblockloc, uint32_t block_size,
+                                 uint32_t fragment_size, uint64_t fragments);
+
+/**
  * Writes a little-endian 32-bit value at p.
  */
 void fixture_put_le32(uint8_t *p, uint32_t value);

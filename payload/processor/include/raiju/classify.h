@@ -6,10 +6,17 @@
 #include <stdint.h>
 
 #define RAIJU_UFS2_SUPERBLOCK_OFFSET 65536u
-#define RAIJU_UFS2_MAGIC_OFFSET (RAIJU_UFS2_SUPERBLOCK_OFFSET + 1372u)
+#define RAIJU_UFS2_MAGIC_FIELD 1372u
+#define RAIJU_UFS2_SBLOCKLOC_FIELD 1000u
+#define RAIJU_UFS2_MAGIC_OFFSET (RAIJU_UFS2_SUPERBLOCK_OFFSET + RAIJU_UFS2_MAGIC_FIELD)
 #define RAIJU_UFS2_MAGIC 0x19540119u
 #define RAIJU_UFS2_SUPERBLOCK_PROBE 1376u
-#define RAIJU_PROBE_SIZE (RAIJU_UFS2_SUPERBLOCK_OFFSET + RAIJU_UFS2_SUPERBLOCK_PROBE)
+#define RAIJU_UFS2_SUPERBLOCK_SEARCH_COUNT 4u
+#define RAIJU_UFS2_SUPERBLOCK_SEARCH_MAX 262144u
+#define RAIJU_PROBE_SIZE (RAIJU_UFS2_SUPERBLOCK_SEARCH_MAX + RAIJU_UFS2_SUPERBLOCK_PROBE)
+#define RAIJU_UFS2_NOT_FOUND UINT32_MAX
+
+extern const uint32_t raiju_ufs2_superblock_search[RAIJU_UFS2_SUPERBLOCK_SEARCH_COUNT];
 
 typedef enum {
 	RAIJU_KIND_UNKNOWN = 0,
@@ -74,5 +81,19 @@ const char *raiju_kind_name(raiju_kind kind);
  * that image's signature.
  */
 raiju_classification raiju_classify(const uint8_t *head, size_t head_len, const char *file_name);
+
+/**
+ * Returns true when a UFS2 superblock sits at offset in the given bytes: the
+ * magic matches and fs_sblockloc records that same offset, which is how FreeBSD
+ * tells a primary superblock from a backup copy.
+ */
+bool raiju_ufs2_superblock_at(const uint8_t *bytes, size_t len, uint32_t offset);
+
+/**
+ * Searches the head of an image for its UFS2 superblock in FreeBSD's
+ * SBLOCKSEARCH order (65536, 8192, 0, 262144) and returns its offset, or
+ * RAIJU_UFS2_NOT_FOUND.
+ */
+uint32_t raiju_find_ufs2_superblock(const uint8_t *head, size_t head_len);
 
 #endif

@@ -80,14 +80,19 @@ uint8_t *fixture_ufs2(size_t image_len, uint32_t block_size, uint32_t fragment_s
 	if (image == NULL) {
 		return NULL;
 	}
-	uint8_t *superblock = image + 65536;
+	fixture_put_ufs2_superblock(image, 65536, 65536, block_size, fragment_size, fragments);
+	return image;
+}
+
+void fixture_put_ufs2_superblock(uint8_t *image, size_t location, uint64_t sblockloc, uint32_t block_size,
+                                 uint32_t fragment_size, uint64_t fragments) {
+	uint8_t *superblock = image + location;
 	fixture_put_le32(superblock + 48, block_size);
 	fixture_put_le32(superblock + 52, fragment_size);
 	fixture_put_le32(superblock + 56, fragment_size ? block_size / fragment_size : 0);
-	fixture_put_le64(superblock + 1000, 65536);
+	fixture_put_le64(superblock + 1000, sblockloc);
 	fixture_put_le64(superblock + 1080, fragments);
 	fixture_put_le32(superblock + 1372, 0x19540119u);
-	return image;
 }
 
 char *fixture_temp_dir(void) {

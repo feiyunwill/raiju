@@ -346,6 +346,24 @@ static void ufs2_reads_param_json_with_fragments(void) {
 	builder_ufs2_free(fs);
 }
 
+static void ufs2_reads_primary_superblock_at_8192(void) {
+	builder_ufs2 *fs = builder_ufs2_game(65536, 65536, PARAM_JSON);
+	CHECK(fs != NULL);
+	memcpy(fs->data + 8192, fs->data + 65536, 1376);
+	fixture_put_le64(fs->data + 8192 + 1000, 8192);
+	fixture_put_le64(fs->data + 65536 + 1000, 8192);
+	CHECK_INT(ufs2_status(fs), RAIJU_IMAGE_FS_OK);
+	builder_ufs2_free(fs);
+}
+
+static void ufs2_rejects_lone_backup_superblock(void) {
+	builder_ufs2 *fs = builder_ufs2_game(4096, 4096, PARAM_JSON);
+	CHECK(fs != NULL);
+	fixture_put_le64(fs->data + 65536 + 1000, 8192);
+	CHECK_INT(ufs2_status(fs), RAIJU_IMAGE_FS_UNSUPPORTED);
+	builder_ufs2_free(fs);
+}
+
 static void ufs2_reads_shadowmountplus_profile(void) {
 	builder_ufs2 *fs = builder_ufs2_game(65536, 65536, PARAM_JSON);
 	CHECK(fs != NULL);
@@ -691,6 +709,8 @@ void run_image_fs_tests(void) {
 	RUN_TEST(exfat_truncated_or_foreign_image_fails);
 	RUN_TEST(ufs2_reads_param_json_with_fragments);
 	RUN_TEST(ufs2_reads_shadowmountplus_profile);
+	RUN_TEST(ufs2_reads_primary_superblock_at_8192);
+	RUN_TEST(ufs2_rejects_lone_backup_superblock);
 	RUN_TEST(ufs2_reads_single_indirect_blocks);
 	RUN_TEST(ufs2_reads_double_indirect_directory);
 	RUN_TEST(ufs2_missing_entries_are_not_found);

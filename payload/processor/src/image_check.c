@@ -28,7 +28,6 @@ enum {
 	UFS2_FRAGMENT_SIZE = 52,
 	UFS2_FRAGS_PER_BLOCK = 56,
 	UFS2_SIZE = 1080,
-	UFS2_MAGIC = 1372,
 	UFS2_MIN_BLOCK_SIZE = 4096,
 	UFS2_MAX_BLOCK_SIZE = 65536,
 	UFS2_MIN_FRAGMENT_SIZE = 512,
@@ -132,15 +131,13 @@ raiju_image_report raiju_check_exfat(const uint8_t *head, size_t head_len, uint6
 raiju_image_report raiju_check_ufs2(const uint8_t *head, size_t head_len, uint64_t image_size) {
 	raiju_image_report report;
 	memset(&report, 0, sizeof report);
-	if (head == NULL || head_len < RAIJU_PROBE_SIZE) {
-		report.status = RAIJU_IMAGE_SHORT_READ;
+	uint64_t wanted = image_size < RAIJU_PROBE_SIZE ? image_size : RAIJU_PROBE_SIZE;
+	uint32_t location = raiju_find_ufs2_superblock(head, head == NULL ? 0 : head_len);
+	if (location == RAIJU_UFS2_NOT_FOUND) {
+		report.status = head == NULL || head_len < wanted ? RAIJU_IMAGE_SHORT_READ : RAIJU_IMAGE_BAD_SIGNATURE;
 		return report;
 	}
-	const uint8_t *superblock = head + RAIJU_UFS2_SUPERBLOCK_OFFSET;
-	if (raiju_read_le32(superblock + UFS2_MAGIC) != RAIJU_UFS2_MAGIC) {
-		report.status = RAIJU_IMAGE_BAD_SIGNATURE;
-		return report;
-	}
+	const uint8_t *superblock = head + location;
 	uint32_t block_size = raiju_read_le32(superblock + UFS2_BLOCK_SIZE);
 	uint32_t fragment_size = raiju_read_le32(superblock + UFS2_FRAGMENT_SIZE);
 	uint32_t frags_per_block = raiju_read_le32(superblock + UFS2_FRAGS_PER_BLOCK);
