@@ -8,6 +8,7 @@
 #include "api_internal.h"
 #include "raiju/classify.h"
 #include "raiju/platform.h"
+#include "raiju/sevenz.h"
 #include "raiju/space.h"
 
 #define PROBE_HEAD_MAX (4u * 1024u * 1024u)
@@ -19,6 +20,9 @@
 #define ZIP_ZIP64_LOCATOR 0x07064b50u
 #define ZIP_ZIP64_EOCD 0x06064b50u
 #define ZIP_CENTRAL_SIGNATURE 0x02014b50u
+#define SEVENZ_ENCODED_HEADER 0x17u
+#define SEVENZ_PACKED_HEADER_MAX (4u * 1024u * 1024u)
+#define SEVENZ_DECODED_HEADER_MAX (16u * 1024u * 1024u)
 
 static uint16_t read16(const unsigned char *bytes) {
 	return (uint16_t)(bytes[0] | (bytes[1] << 8));
@@ -194,6 +198,81 @@ static bool read_number(const unsigned char *bytes, size_t length, size_t *posit
 }
 
 /**
+ * Reads one folder's coder chain, bind pairs and packed stream indices. The
+ * coder flags carry the codec id size and whether property bytes follow, so
+ * both are read rather than skipped and a compressed folder parses as well as
+ * a stored one. output_streams receives how many entries the kCodersUnpackSize
+ * list holds for the folder.
+ */
+static bool sevenz_read_folder(const unsigned char *bytes, size_t length, size_t *position, raiju_sevenz_folder *out,
+                               uint64_t *output_streams) {
+	memset(out, 0, sizeof *out);
+	uint64_t coders;
+	if (!read_number(bytes, length, position, &coders) || coders == 0 || coders > RAIJU_SEVENZ_MAX_CODERS) {
+		return false;
+	}
+	out->coder_count = (size_t)coders;
+	uint64_t total_in = 0;
+	uint64_t total_out = 0;
+	for (size_t i = 0; i < out->coder_count; i++) {
+		raiju_sevenz_coder *coder = &out->coders[i];
+		uint64_t inputs = 1;
+		uint64_t outputs = 1;
+		if (*position >= length) {
+			return false;
+		}
+		unsigned char flags = bytes[(*position)++];
+		if ((flags & 0x10) != 0) {
+			if (!read_number(bytes, length, position, &inputs) || !read_number(bytes, length, position, &outputs) ||
+			    inputs == 0 || outputs == 0) {
+				return false;
+			}
+		}
+		size_t id_size = (size_t)(flags & 0x0F);
+		if (id_size == 0 || id_size > RAIJU_SEVENZ_CODEC_ID_MAX || *position + id_size > length) {
+			return false;
+		}
+		for (size_t b = 0; b < id_size; b++) {
+			coder->codec = (coder->codec << 8) | (uint64_t)bytes[*position + b];
+		}
+		*position += id_size;
+		if ((flags & 0x20) != 0) {
+			uint64_t properties_size;
+			if (!read_number(bytes, length, position, &properties_size) ||
+			    properties_size > RAIJU_SEVENZ_PROPERTIES_MAX || *position + properties_size > length) {
+				return false;
+			}
+			memcpy(coder->properties, bytes + *position, (size_t)properties_size);
+			coder->properties_length = (size_t)properties_size;
+			*position += (size_t)properties_size;
+		}
+		total_in += inputs;
+		total_out += outputs;
+	}
+	if (total_out == 0) {
+		return false;
+	}
+	uint64_t bind_pairs = total_out - 1;
+	for (uint64_t i = 0; i < bind_pairs; i++) {
+		uint64_t index;
+		if (!read_number(bytes, length, position, &index) || !read_number(bytes, length, position, &index)) {
+			return false;
+		}
+	}
+	uint64_t packed_streams = total_in - bind_pairs;
+	if (packed_streams > 1) {
+		for (uint64_t i = 0; i < packed_streams; i++) {
+			uint64_t index;
+			if (!read_number(bytes, length, position, &index)) {
+				return false;
+			}
+		}
+	}
+	*output_streams = total_out;
+	return true;
+}
+
+/**
  * Parses a 7z "StreamsInfo" far enough to sum each folder's unpacked size,
  * which is the archive's total uncompressed size. Returns false on any
  * malformed field.
@@ -263,56 +342,13 @@ static bool sevenz_streams_size(const unsigned char *bytes, size_t length, size_
 	}
 	bool ok = true;
 	for (uint64_t f = 0; ok && f < folders; f++) {
-		uint64_t coders;
-		if (!read_number(bytes, length, position, &coders) || coders == 0 || coders > 4) {
+		raiju_sevenz_folder folder;
+		uint64_t streams = 0;
+		if (!sevenz_read_folder(bytes, length, position, &folder, &streams)) {
 			ok = false;
 			break;
 		}
-		uint64_t total_in = 0;
-		uint64_t total_out = 0;
-		for (uint64_t c = 0; ok && c < coders; c++) {
-			if (*position >= length) {
-				ok = false;
-				break;
-			}
-			unsigned char flags = bytes[(*position)++];
-			uint64_t in = 1;
-			uint64_t out = 1;
-			if (flags & 0x10) {
-				if (!read_number(bytes, length, position, &in) || !read_number(bytes, length, position, &out)) {
-					ok = false;
-					break;
-				}
-			}
-			if (*position + (flags & 0x0F) > length) {
-				ok = false;
-				break;
-			}
-			*position += flags & 0x0F;
-			total_in += in;
-			total_out += out;
-		}
-		if (!ok || total_out == 0) {
-			ok = false;
-			break;
-		}
-		uint64_t bind_pairs = total_out - 1;
-		for (uint64_t i = 0; ok && i < bind_pairs; i++) {
-			uint64_t index;
-			if (!read_number(bytes, length, position, &index) || !read_number(bytes, length, position, &index)) {
-				ok = false;
-			}
-		}
-		uint64_t packed = total_in - bind_pairs;
-		if (packed > 1) {
-			for (uint64_t i = 0; ok && i < packed; i++) {
-				uint64_t index;
-				if (!read_number(bytes, length, position, &index)) {
-					ok = false;
-				}
-			}
-		}
-		out_streams[f] = total_out;
+		out_streams[f] = streams;
 	}
 	uint64_t size_id;
 	if (ok && (!read_number(bytes, length, position, &size_id) || size_id != 0x0C)) {
@@ -337,28 +373,11 @@ static bool sevenz_streams_size(const unsigned char *bytes, size_t length, size_
 	return true;
 }
 
-static bool sevenz_uncompressed_size(raiju_gateway *gateway, const char *url, uint64_t total, uint64_t *out) {
-	if (total < 32) {
-		return false;
-	}
-	size_t length = 0;
-	char *start = range_slice(gateway, url, 0, 31, 64, &length);
-	if (start == NULL || length < 32 || read32((unsigned char *)start) != SEVENZ_MAGIC) {
-		free(start);
-		return false;
-	}
-	uint64_t next_offset = read64((unsigned char *)start + 12);
-	uint64_t next_size = read64((unsigned char *)start + 20);
-	free(start);
-	if (next_size == 0 || next_size > PROBE_INDEX_MAX) {
-		return false;
-	}
-	uint64_t next_start = 32 + next_offset;
-	char *header = range_slice(gateway, url, next_start, next_start + next_size - 1, PROBE_INDEX_MAX + 64, &length);
-	if (header == NULL) {
-		return false;
-	}
-	const unsigned char *bytes = (const unsigned char *)header;
+/**
+ * Parses a plain 7z header (kHeader, optional archive properties, then
+ * kMainStreamsInfo) and returns the total uncompressed size it declares.
+ */
+static bool sevenz_plain_header_size(const unsigned char *bytes, size_t length, uint64_t *out) {
 	size_t position = 0;
 	bool ok = length > 0 && bytes[position++] == 0x01;
 	if (ok && position < length && bytes[position] == 0x02) {
@@ -381,12 +400,133 @@ static bool sevenz_uncompressed_size(raiju_gateway *gateway, const char *url, ui
 		position++;
 		ok = sevenz_streams_size(bytes, length, &position, &total_uncompressed);
 	}
-	free(header);
 	if (!ok) {
 		return false;
 	}
 	*out = total_uncompressed;
 	return true;
+}
+
+/**
+ * Reads the StreamsInfo of an encoded 7z header: the packed stream holding
+ * the header, the folder that decodes it and how large the decoded header is.
+ * bytes starts at kEncodedHeader itself, which the caller already matched, so
+ * parsing starts one byte in. Only the single-stream, single-folder shape real
+ * archives use is accepted.
+ */
+static bool sevenz_read_encoded_info(const unsigned char *bytes, size_t length, uint64_t *out_pack_position,
+                                     uint64_t *out_pack_size, raiju_sevenz_folder *out_folder) {
+	size_t position = 1;
+	uint64_t id;
+	if (!read_number(bytes, length, &position, &id) || id != 0x06) {
+		return false;
+	}
+	uint64_t pack_position;
+	uint64_t pack_streams;
+	if (!read_number(bytes, length, &position, &pack_position) ||
+	    !read_number(bytes, length, &position, &pack_streams) || pack_streams != 1) {
+		return false;
+	}
+	uint64_t pack_size = 0;
+	if (!read_number(bytes, length, &position, &id)) {
+		return false;
+	}
+	if (id == 0x09) {
+		if (!read_number(bytes, length, &position, &pack_size) || !read_number(bytes, length, &position, &id)) {
+			return false;
+		}
+	}
+	if (id != 0x00 || !read_number(bytes, length, &position, &id) || id != 0x07) {
+		return false;
+	}
+	uint64_t folder_marker;
+	uint64_t folders;
+	if (!read_number(bytes, length, &position, &folder_marker) || folder_marker != 0x0B ||
+	    !read_number(bytes, length, &position, &folders) || folders != 1 || position >= length) {
+		return false;
+	}
+	position++;
+	uint64_t streams = 0;
+	if (!sevenz_read_folder(bytes, length, &position, out_folder, &streams) || streams != 1) {
+		return false;
+	}
+	uint64_t sizes_id;
+	uint64_t unpacked_size = 0;
+	if (!read_number(bytes, length, &position, &sizes_id) || sizes_id != 0x0C ||
+	    !read_number(bytes, length, &position, &unpacked_size)) {
+		return false;
+	}
+	if (pack_size == 0 || pack_size > SEVENZ_PACKED_HEADER_MAX || unpacked_size == 0 ||
+	    unpacked_size > SEVENZ_DECODED_HEADER_MAX) {
+		return false;
+	}
+	out_folder->unpacked_size = unpacked_size;
+	*out_pack_position = pack_position;
+	*out_pack_size = pack_size;
+	return true;
+}
+
+/**
+ * Decodes an encoded next header (kEncodedHeader) with liblzma and returns the
+ * size the decoded header declares, or false when it cannot be read.
+ */
+static bool sevenz_encoded_header_size(raiju_gateway *gateway, const char *url, const unsigned char *bytes,
+                                       size_t length, uint64_t *out) {
+	if (!raiju_sevenz_decoding_available()) {
+		return false;
+	}
+	uint64_t pack_position = 0;
+	uint64_t pack_size = 0;
+	raiju_sevenz_folder folder;
+	memset(&folder, 0, sizeof folder);
+	if (!sevenz_read_encoded_info(bytes, length, &pack_position, &pack_size, &folder)) {
+		return false;
+	}
+	size_t packed_length = 0;
+	uint64_t pack_start = 32 + pack_position;
+	char *packed = range_slice(gateway, url, pack_start, pack_start + pack_size - 1, SEVENZ_PACKED_HEADER_MAX + 64,
+	                           &packed_length);
+	if (packed == NULL) {
+		return false;
+	}
+	unsigned char *decoded = malloc((size_t)folder.unpacked_size);
+	size_t decoded_length = 0;
+	bool ok = decoded != NULL &&
+	          raiju_sevenz_decode(&folder, (const unsigned char *)packed, packed_length, decoded,
+	                              (size_t)folder.unpacked_size, &decoded_length) &&
+	          sevenz_plain_header_size(decoded, decoded_length, out);
+	free(decoded);
+	free(packed);
+	return ok;
+}
+
+static bool sevenz_uncompressed_size(raiju_gateway *gateway, const char *url, uint64_t total, uint64_t *out) {
+	if (total < 32) {
+		return false;
+	}
+	size_t length = 0;
+	char *start = range_slice(gateway, url, 0, 31, 64, &length);
+	if (start == NULL || length < 32 || read32((unsigned char *)start) != SEVENZ_MAGIC) {
+		free(start);
+		return false;
+	}
+	uint64_t next_offset = read64((unsigned char *)start + 12);
+	uint64_t next_size = read64((unsigned char *)start + 20);
+	free(start);
+	if (next_size == 0 || next_size > PROBE_INDEX_MAX) {
+		return false;
+	}
+	uint64_t next_start = 32 + next_offset;
+	char *header = range_slice(gateway, url, next_start, next_start + next_size - 1, PROBE_INDEX_MAX + 64, &length);
+	if (header == NULL) {
+		return false;
+	}
+	const unsigned char *bytes = (const unsigned char *)header;
+	bool ok = length > 0 && bytes[0] == SEVENZ_ENCODED_HEADER
+	              ? sevenz_encoded_header_size(gateway, url, bytes, length, out)
+	              : sevenz_plain_header_size(bytes, length, out);
+	free(header);
+	return ok;
 }
 
 static const char *uri_basename(const char *uri, char *out, size_t capacity) {

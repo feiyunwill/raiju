@@ -99,10 +99,10 @@ jobs:
           persist-credentials: false
       - name: Install build deps (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y aria2 libarchive-dev libssl-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y aria2 libarchive-dev liblzma-dev libssl-dev pkg-config
       - name: Install build deps (macOS)
         if: runner.os == 'macOS'
-        run: brew install aria2 libarchive openssl pkg-config
+        run: brew install aria2 libarchive openssl xz pkg-config
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run --cwd ui build

@@ -15,6 +15,7 @@
 #include "raiju/fetch.h"
 #include "raiju/gateway.h"
 #include "raiju/http.h"
+#include "raiju/sevenz.h"
 #include "test.h"
 
 static size_t put16(unsigned char *out, uint16_t value) {
@@ -411,9 +412,121 @@ static void fits_reflects_free_space(void) {
 	raiju_fixture_server_stop(server);
 }
 
+/**
+ * Writes one little-endian 64-bit value.
+ */
+static size_t put64(unsigned char *out, uint64_t value) {
+	for (int i = 0; i < 8; i++) {
+		out[i] = (unsigned char)((value >> (8 * i)) & 0xFF);
+	}
+	return 8;
+}
+
+/**
+ * Builds a 7z whose next header is encoded and claims a packed stream far
+ * beyond the probe's cap, so the probe must answer "size unknown".
+ */
+static size_t build_encoded_header_with_a_huge_stream(unsigned char *out, size_t capacity) {
+	if (capacity < 128) {
+		return 0;
+	}
+	memset(out, 0, 128);
+	static const unsigned char magic[6] = {0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C};
+	memcpy(out, magic, 6);
+	unsigned char *header = out + 32;
+	unsigned char *cursor = header;
+	*cursor++ = 0x17;
+	*cursor++ = 0x06;
+	cursor += write_number(cursor, 0);
+	cursor += write_number(cursor, 1);
+	*cursor++ = 0x09;
+	cursor += write_number(cursor, 20000000ull);
+	*cursor++ = 0x00;
+	size_t header_size = (size_t)(cursor - header);
+	put32(out + 8, 0);
+	put64(out + 12, 0);
+	put64(out + 20, (uint64_t)header_size);
+	put32(out + 28, 0);
+	return 32 + header_size;
+}
+
+static void probes_an_encoded_sevenz_header(void) {
+	if (!raiju_sevenz_decoding_available()) {
+		printf("  (skipping encoded 7z: the build has no liblzma)\n");
+		return;
+	}
+	char directory[1024];
+	if (raiju_test_tmpdir(directory, sizeof directory, "probe-encoded") != 0) {
+		CHECK(false);
+		return;
+	}
+	unsigned char first[512];
+	unsigned char second[700];
+	memset(first, 'a', sizeof first);
+	memset(second, 'b', sizeof second);
+	const size_t expected_sum = sizeof first + sizeof second;
+	const fixture_entry entries[] = {
+	    {"first.bin", AE_IFREG, first, sizeof first, NULL},
+	    {"second.bin", AE_IFREG, second, sizeof second, NULL},
+	};
+	char path[1200];
+	snprintf(path, sizeof path, "%s/game.7z", directory);
+	int status = archive_builder_write(path, FORMAT_7Z, entries, 2);
+	CHECK_INT(status, 0);
+	if (status != 0) {
+		raiju_test_rmtree(directory);
+		return;
+	}
+	unsigned char archive[65536];
+	size_t archive_length = read_file_bytes(path, archive, sizeof archive);
+	CHECK(archive_length > 32);
+	uint64_t next_offset = 0;
+	for (int i = 0; i < 8; i++) {
+		next_offset |= (uint64_t)archive[12 + i] << (8 * i);
+	}
+	CHECK(32 + next_offset < archive_length);
+	CHECK_INT(archive[32 + next_offset], 0x17);
+
+	unsigned char huge[128];
+	size_t huge_length = build_encoded_header_with_a_huge_stream(huge, sizeof huge);
+	CHECK(huge_length > 32);
+
+	raiju_fixture_server *server = raiju_fixture_server_start();
+	CHECK(server != NULL);
+	CHECK(raiju_fixture_server_add_file(server, "/encoded.7z", archive, archive_length));
+	CHECK(raiju_fixture_server_add_file(server, "/huge.7z", huge, huge_length));
+	raiju_fake_platform fake;
+	char gateway_dir[1024];
+	raiju_gateway *gateway = make_gateway(&fake, gateway_dir, sizeof gateway_dir);
+	CHECK(gateway != NULL);
+	fake.free_bytes = 4ull * 1024 * 1024 * 1024;
+	char cookie[160];
+	pair_the_gateway(gateway, cookie, sizeof cookie);
+	char uri[128];
+	char body[2048];
+	char expected[64];
+	snprintf(expected, sizeof expected, "\"uncompressedSize\":%zu", expected_sum);
+
+	snprintf(uri, sizeof uri, "http://127.0.0.1:%u/encoded.7z", raiju_fixture_server_port(server));
+	CHECK_INT(probe(gateway, cookie, uri, body, sizeof body), 200);
+	CHECK(strstr(body, "\"kind\":\"7z\"") != NULL);
+	CHECK(strstr(body, "\"uncompressedKnown\":true") != NULL);
+	CHECK(strstr(body, expected) != NULL);
+
+	snprintf(uri, sizeof uri, "http://127.0.0.1:%u/huge.7z", raiju_fixture_server_port(server));
+	CHECK_INT(probe(gateway, cookie, uri, body, sizeof body), 200);
+	CHECK(strstr(body, "\"uncompressedKnown\":false") != NULL);
+
+	raiju_gateway_destroy(gateway);
+	raiju_test_rmtree(gateway_dir);
+	raiju_test_rmtree(directory);
+	raiju_fixture_server_stop(server);
+}
+
 void run_probe_tests(void) {
 	RUN_TEST(probes_a_zip_and_a_sevenz);
 	RUN_TEST(probes_real_archives_written_by_libarchive);
+	RUN_TEST(probes_an_encoded_sevenz_header);
 	RUN_TEST(a_probe_is_refused_while_another_runs);
 	RUN_TEST(fits_reflects_free_space);
 }

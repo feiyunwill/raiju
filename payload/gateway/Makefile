@@ -7,6 +7,9 @@ OPENSSL_PKG_CONFIG := PKG_CONFIG_PATH="$(if $(BREW_OPENSSL),$(BREW_OPENSSL)/lib/
 OPENSSL_LIBS := $(shell $(OPENSSL_PKG_CONFIG) --libs openssl 2>/dev/null)
 BREW_LIBARCHIVE := $(shell command -v brew >/dev/null 2>&1 && brew --prefix libarchive 2>/dev/null)
 LIBARCHIVE_PKG_CONFIG := PKG_CONFIG_PATH="$(if $(BREW_LIBARCHIVE),$(BREW_LIBARCHIVE)/lib/pkgconfig:)$$PKG_CONFIG_PATH" $(PKG_CONFIG)
+BREW_XZ := $(shell command -v brew >/dev/null 2>&1 && brew --prefix xz 2>/dev/null)
+LZMA_PKG_CONFIG := PKG_CONFIG_PATH="$(if $(BREW_XZ),$(BREW_XZ)/lib/pkgconfig:)$$PKG_CONFIG_PATH" $(PKG_CONFIG)
+LZMA_LIBS := $(shell $(LZMA_PKG_CONFIG) --libs liblzma 2>/dev/null)
 RAIJU_VERSION ?= 0.0.0
 CPPFLAGS := -Iinclude -Isrc -I../third_party/civetweb -I../processor/include -DRAIJU_VERSION=\"$(RAIJU_VERSION)\"
 CPPFLAGS += $(shell $(LIBARCHIVE_PKG_CONFIG) --cflags libarchive)
@@ -14,6 +17,10 @@ LDLIBS += $(shell $(LIBARCHIVE_PKG_CONFIG) --libs libarchive)
 ifneq ($(OPENSSL_LIBS),)
 CPPFLAGS += $(shell $(OPENSSL_PKG_CONFIG) --cflags openssl) -DRAIJU_FETCH_TLS
 LDLIBS += $(OPENSSL_LIBS)
+endif
+ifneq ($(LZMA_LIBS),)
+CPPFLAGS += $(shell $(LZMA_PKG_CONFIG) --cflags liblzma) -DRAIJU_HAVE_LZMA
+LDLIBS += $(LZMA_LIBS)
 endif
 
 CIVETWEB_VERSION := 1.16
@@ -44,6 +51,7 @@ CORE_SOURCES := \
 	src/art.c \
 	src/api.c \
 	src/api_probe.c \
+	src/sevenz.c \
 	src/supervisor.c \
 	src/http.c \
 	src/gateway.c
