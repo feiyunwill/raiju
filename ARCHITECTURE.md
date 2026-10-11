@@ -99,11 +99,11 @@ stateDiagram-v2
    3. Otherwise, pause the job and ask the user in the UI.
    `param.json`'s display name (`localizedParameters`) is stored with the job for the UI. If (1) and (2) disagree, (1) wins and the UI shows a note.
 3. **Extract** (archives only). libarchive reads the archive in order and writes into `/data/raiju/staging/<job-id>/`.
-   - Every entry path is normalized and rejected if absolute or containing `..`. Symlinks and hardlinks inside archives are refused.
+   - Every entry path is normalized and rejected if absolute or containing `..` or a backslash. Symlinks, hardlinks and special files inside archives are refused. Any rejected entry fails the job; nothing is silently skipped. libarchive's `SECURE_SYMLINKS` and `SECURE_NODOTDOT` flags are set as a second line of defence.
    - Large write buffers (1 MiB) and no per-file fsync during extraction; one `fsync` pass over the result happens before install.
-   - Layout normalization: a folder dump must have `sce_sys/` at its root. If the archive wraps it in extra folders (`Game/Game/sce_sys`), Raiju strips them. If the archive contains a single SMP image, that image becomes the install payload.
+   - Layout normalization: a folder dump must have `sce_sys/` at its root. If the archive wraps it in extra folders (`Game/Game/sce_sys`), Raiju strips them by installing the innermost folder; `__MACOSX/` and `.DS_Store` don't count as content. Otherwise, if the archive contains exactly one SMP image (`.ffpkg`, `.exfat`, `.ffpfs`, `.ffpfsc`) that passes the step 2 checks, that image becomes the install payload. Several images, or neither a dump nor an image, fail the job.
    - Progress is reported as bytes extracted out of the total, read from the archive index.
-   - Pause and cancel are honoured between entries. Resuming restarts the archive from the beginning, because libarchive can't resume mid-stream; the staging folder is wiped first.
+   - Pause and cancel are honoured between entries. Resuming restarts the archive from the beginning, because libarchive can't resume mid-stream; the staging folder is wiped first. Extraction refuses a non-empty staging folder, so a resume can't mix two runs.
 4. **Install.** `rename()` from staging (or from downloads, for images) to the destination. It's atomic because `/data/raiju` and `/data/homebrew` are on the same filesystem.
    - Destination defaults: images go to `/data/homebrew/<TITLE_ID>.<ext>` (extension in lowercase, e.g. `PPSA24003.exfat`), folder dumps to `/data/homebrew/<TITLE_ID>/`. The root is configurable, e.g. `/data/etaHEN/games`.
    - If the name already exists, the job waits for the user to choose rename, replace or cancel. "Replace" renames the old copy to a trash folder first, then deletes it after the swap.
@@ -241,7 +241,7 @@ Downloading during rest mode itself isn't possible from a payload.
 raiju/
 ├─ payload/          # raiju.elf: supervisor, gateway, processor, API
 │  ├─ src/
-│  ├─ processor/     # portable C11 pipeline stages; `make -C payload/processor test` runs host unit tests
+│  ├─ processor/     # portable C11 pipeline stages; `make -C payload/processor test` runs host unit tests (needs libarchive and pkg-config)
 │  ├─ third_party/   # aria2 (fork), libarchive, openssl, zlib, zstd, xz, c-ares, civetweb
 │  └─ Makefile
 ├─ ui/               # Vite + React + shadcn SPA (shared by all clients)

@@ -13,6 +13,8 @@ int main(void) {
 	run_inspect_tests();
 	printf("title_id\n");
 	run_title_id_tests();
+	printf("extract\n");
+	run_extract_tests();
 	printf("%d tests, %d checks, %d failures\n", raiju_test_count, raiju_test_checks, raiju_test_failures);
 	return raiju_test_failures == 0 ? 0 : 1;
 }

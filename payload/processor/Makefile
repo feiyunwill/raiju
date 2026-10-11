@@ -3,6 +3,12 @@ CFLAGS ?= -O1 -g
 WARNINGS := -Wall -Wextra -Werror -std=c11 -pedantic
 CPPFLAGS := -Iinclude -Isrc
 
+PKG_CONFIG ?= pkg-config
+BREW_LIBARCHIVE := $(shell command -v brew >/dev/null 2>&1 && brew --prefix libarchive 2>/dev/null)
+LIBARCHIVE_PKG_CONFIG := PKG_CONFIG_PATH="$(if $(BREW_LIBARCHIVE),$(BREW_LIBARCHIVE)/lib/pkgconfig:)$$PKG_CONFIG_PATH" $(PKG_CONFIG)
+CPPFLAGS += $(shell $(LIBARCHIVE_PKG_CONFIG) --cflags libarchive)
+LDLIBS += $(shell $(LIBARCHIVE_PKG_CONFIG) --libs libarchive)
+
 BUILD := build
 SOURCES := $(wildcard src/*.c)
 TEST_SOURCES := $(wildcard tests/*.c)
@@ -19,7 +25,7 @@ test: $(TEST_BINARY)
 	./$(TEST_BINARY)
 
 $(TEST_BINARY): $(OBJECTS) $(TEST_OBJECTS)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(BUILD)/%.o: %.c $(HEADERS)
 	@mkdir -p $(dir $@)

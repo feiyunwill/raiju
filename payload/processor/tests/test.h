@@ -68,4 +68,9 @@ void run_inspect_tests(void);
  */
 void run_title_id_tests(void);
 
+/**
+ * Runs the archive extraction, path safety and layout normalization tests.
+ */
+void run_extract_tests(void);
+
 #endif
