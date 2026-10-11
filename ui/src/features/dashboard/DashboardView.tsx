@@ -1,5 +1,4 @@
-import type { Dashboard } from "@/data/types";
-import type { DashboardActions } from "@/data/useDashboard";
+import type { Dashboard, DashboardActions } from "@/data/types";
 import { formatDuration } from "@/lib/format";
 import { NowDownloading } from "./NowDownloading";
 import { QueueList } from "./QueueList";
@@ -11,6 +10,7 @@ type DashboardViewProps = {
 	actions: DashboardActions;
 	onAdd: () => void;
 	onViewAll: () => void;
+	onOpenDetail: (id: string) => void;
 };
 
 /** Home: the current job, live throughput, storage and the head of the queue. */
@@ -19,6 +19,7 @@ export function DashboardView({
 	actions,
 	onAdd,
 	onViewAll,
+	onOpenDetail,
 }: DashboardViewProps) {
 	const current =
 		dashboard.jobs.find((job) => job.status === "active") ??
@@ -33,10 +34,14 @@ export function DashboardView({
 		.reduce(
 			(sum, job) =>
 				sum +
-				(job.totalBytes -
-					(job.stage === "download" ? job.stageDoneBytes : job.totalBytes)),
+				Math.max(
+					0,
+					job.totalBytes -
+						(job.stage === "download" ? job.stageDoneBytes : job.totalBytes),
+				),
 			0,
 		);
+	const { version, uptimeSeconds } = dashboard.console;
 	return (
 		<div className="flex flex-col gap-6">
 			<div className="flex flex-col gap-1">
@@ -44,8 +49,8 @@ export function DashboardView({
 					Overview
 				</h1>
 				<p className="text-muted-foreground text-[13px]">
-					Raiju {dashboard.console.version} · up{" "}
-					{formatDuration(dashboard.console.uptimeSeconds)}
+					{version || "Connecting…"}
+					{uptimeSeconds !== null && ` · up ${formatDuration(uptimeSeconds)}`}
 				</p>
 			</div>
 			<NowDownloading
@@ -70,7 +75,12 @@ export function DashboardView({
 						View all
 					</button>
 				</div>
-				<QueueList jobs={dashboard.jobs} actions={actions} limit={4} />
+				<QueueList
+					jobs={dashboard.jobs}
+					actions={actions}
+					limit={4}
+					onOpenDetail={onOpenDetail}
+				/>
 			</div>
 		</div>
 	);

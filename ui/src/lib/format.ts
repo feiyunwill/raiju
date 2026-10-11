@@ -44,7 +44,7 @@ export function formatDuration(seconds: number): string {
 /** Formats a percentage with one decimal, e.g. `42.7%`. */
 export function formatPercent(done: number, total: number): string {
 	if (total <= 0) {
-		return "0%";
+		return "—";
 	}
 	return `${((done / total) * 100).toFixed(1)}%`;
 }

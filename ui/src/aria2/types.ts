@@ -70,6 +70,29 @@ export type Aria2Version = {
 
 export type Aria2Options = Record<string, string>;
 
+export type Aria2Peer = {
+	peerId: string;
+	ip: string;
+	port: string;
+	bitfield: string;
+	amChoking: "true" | "false";
+	peerChoking: "true" | "false";
+	downloadSpeed: string;
+	uploadSpeed: string;
+	seeder: "true" | "false";
+};
+
+export type Aria2Server = {
+	uri: string;
+	currentUri: string;
+	downloadSpeed: string;
+};
+
+export type Aria2FileServers = {
+	index: string;
+	servers: Aria2Server[];
+};
+
 export type Aria2Event =
 	| "aria2.onDownloadStart"
 	| "aria2.onDownloadPause"

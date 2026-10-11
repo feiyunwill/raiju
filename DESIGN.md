@@ -92,6 +92,12 @@ Dark is the default (the console look). Light is the alternative (the companion-
 - **Progress bars** animate their width smoothly with a 1s linear transition between polls, so they glide instead of stepping.
 - `prefers-reduced-motion`: remove scale and slide; keep opacity fades.
 
+### Cover art
+
+- Covers (`icon0`) and key art (`pic0`) come from OrbisPatches (CUSA) and ProsperoPatches (PPSA), looked up by title ID through `/api/art/<TITLE_ID>` (the gateway on the PS5, a Vite middleware in development). The official title name from the same page replaces the name guessed from the file name.
+- Artwork is the only colour in the UI. Key art sits behind the hero tile and the detail sheet header under a gradient into the surface colour, so text contrast never depends on the image.
+- Without artwork (unknown title, lookup disabled in Settings, offline) the generated monochrome tile with initials is shown; layouts never shift between the two.
+
 ### Iconography
 
 lucide-react (shadcn's default), stroke width 1.5, 20px default size. Icons are always monochrome.

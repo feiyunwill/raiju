@@ -1,4 +1,6 @@
-import type { Console } from "@/data/types";
+import { useArtworkEnabled } from "@/artwork/useArtwork";
+import { Switch } from "@/components/ui/switch";
+import type { Console, SourceMode } from "@/data/types";
 import { formatDuration } from "@/lib/format";
 import { ThemeToggle } from "@/theme/ThemeToggle";
 
@@ -18,7 +20,14 @@ function Row({
 }
 
 /** Appearance and console information. */
-export function SettingsView({ console }: { console: Console }) {
+export function SettingsView({
+	console,
+	mode,
+}: {
+	console: Console;
+	mode: SourceMode;
+}) {
+	const [artwork, setArtwork] = useArtworkEnabled();
 	return (
 		<div className="flex max-w-2xl flex-col gap-6">
 			<h1 className="text-[28px] leading-[34px] font-normal tracking-tight">
@@ -30,6 +39,13 @@ export function SettingsView({ console }: { console: Console }) {
 					<Row label="Theme">
 						<ThemeToggle />
 					</Row>
+					<Row label="Cover art">
+						<Switch
+							checked={artwork}
+							onCheckedChange={setArtwork}
+							aria-label="Show cover art"
+						/>
+					</Row>
 				</div>
 			</section>
 			<section className="flex flex-col gap-2">
@@ -38,8 +54,19 @@ export function SettingsView({ console }: { console: Console }) {
 					<Row label="Address">
 						<span className="font-mono">{console.host}</span>
 					</Row>
-					<Row label="Raiju version">{console.version}</Row>
-					<Row label="Uptime">{formatDuration(console.uptimeSeconds)}</Row>
+					<Row label="Data">
+						{mode === "demo"
+							? "Demo data"
+							: console.online
+								? "Live"
+								: "Offline"}
+					</Row>
+					<Row label="Engine">{console.version || "—"}</Row>
+					<Row label="Uptime">
+						{console.uptimeSeconds === null
+							? "—"
+							: formatDuration(console.uptimeSeconds)}
+					</Row>
 				</div>
 			</section>
 		</div>

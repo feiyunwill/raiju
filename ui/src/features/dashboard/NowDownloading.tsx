@@ -1,4 +1,5 @@
 import { Pause, Play } from "lucide-react";
+import { TitleBackdrop, useTitleName } from "@/artwork/TitleBackdrop";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -35,14 +36,27 @@ export function NowDownloading({
 			</section>
 		);
 	}
+	return <ActiveJob job={job} onTogglePause={onTogglePause} />;
+}
+
+function ActiveJob({
+	job,
+	onTogglePause,
+}: {
+	job: Job;
+	onTogglePause: (id: string) => void;
+}) {
 	const speed = splitSpeed(job.speed);
 	const active = job.status === "active";
+	const name = useTitleName(job.titleId, job.name);
+	const knownSize = job.stageBytes > 0;
 	return (
-		<section className="surface flex flex-col gap-6 p-5 md:flex-row md:gap-8 md:p-8">
+		<section className="surface relative isolate flex flex-col gap-6 overflow-hidden p-5 md:flex-row md:gap-8 md:p-8">
+			<TitleBackdrop titleId={job.titleId} className="-z-10" />
 			<TitleArt
 				titleId={job.titleId}
-				name={job.name}
-				className="aspect-[16/9] w-full self-start text-[28px] md:aspect-square md:w-56"
+				name={name}
+				className="aspect-square w-32 self-start text-[22px] shadow-2xl md:w-56 md:text-[28px]"
 			/>
 			<div className="flex min-w-0 flex-1 flex-col gap-6">
 				<div className="flex items-start justify-between gap-4">
@@ -51,7 +65,7 @@ export function NowDownloading({
 							Now {active ? "downloading" : "paused"}
 						</p>
 						<h2 className="truncate text-2xl font-normal tracking-tight md:text-[28px]">
-							{job.name}
+							{name}
 						</h2>
 						<p className="text-muted-foreground mt-1 truncate font-mono text-xs">
 							{job.sourceName}
@@ -83,13 +97,21 @@ export function NowDownloading({
 					</dl>
 				</div>
 				<div className="flex flex-col gap-2">
-					<Progress
-						value={(job.stageDoneBytes / job.stageBytes) * 100}
-						className="h-1.5"
-					/>
+					{knownSize ? (
+						<Progress
+							value={(job.stageDoneBytes / job.stageBytes) * 100}
+							className="h-1.5"
+						/>
+					) : (
+						<div className="bg-muted relative h-1.5 overflow-hidden rounded-full">
+							<span className="bg-primary/70 absolute inset-y-0 w-1/3 animate-[raiju-indeterminate_1.4s_ease-in-out_infinite] rounded-full" />
+						</div>
+					)}
 					<div className="text-muted-foreground flex justify-between text-xs">
 						<span>
-							{formatBytes(job.stageDoneBytes)} of {formatBytes(job.stageBytes)}
+							{knownSize
+								? `${formatBytes(job.stageDoneBytes)} of ${formatBytes(job.stageBytes)}`
+								: `${formatBytes(job.stageDoneBytes)} · size unknown`}
 						</span>
 						<span className="font-mono">→ {job.installName}</span>
 					</div>

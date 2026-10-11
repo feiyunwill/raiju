@@ -1,13 +1,14 @@
 import { cn } from "cn";
 import { Plus, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { Console } from "@/data/types";
+import type { Console, SourceMode } from "@/data/types";
 import { navItems, type View } from "./navigation";
 
 type AppHeaderProps = {
 	view: View;
 	onNavigate: (view: View) => void;
 	console: Console;
+	mode: SourceMode;
 	onAdd: () => void;
 };
 
@@ -16,6 +17,7 @@ export function AppHeader({
 	view,
 	onNavigate,
 	console,
+	mode,
 	onAdd,
 }: AppHeaderProps) {
 	return (
@@ -28,6 +30,11 @@ export function AppHeader({
 					<span className="text-[15px] font-medium tracking-[0.32em]">
 						RAIJU
 					</span>
+					{mode === "demo" && (
+						<span className="text-muted-foreground rounded-full px-2 py-0.5 text-[10px] tracking-wider ring-1 ring-foreground/15">
+							DEMO
+						</span>
+					)}
 				</div>
 				<nav
 					aria-label="Main"

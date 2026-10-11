@@ -1,9 +1,11 @@
 import {
 	type Aria2Event,
 	type Aria2EventHandler,
+	type Aria2FileServers,
 	type Aria2Gid,
 	type Aria2GlobalStat,
 	type Aria2Options,
+	type Aria2Peer,
 	Aria2RpcError,
 	type Aria2Status,
 	type Aria2StatusKey,
@@ -300,6 +302,26 @@ export class Aria2Client {
 	/** Changes global options such as speed limits and concurrency. */
 	changeGlobalOption(options: Aria2Options): Promise<"OK"> {
 		return this.call("aria2.changeGlobalOption", [options]);
+	}
+
+	/** Options in effect for one download. */
+	getOption(gid: Aria2Gid): Promise<Aria2Options> {
+		return this.call("aria2.getOption", [gid]);
+	}
+
+	/** BitTorrent peers of one download. */
+	getPeers(gid: Aria2Gid): Promise<Aria2Peer[]> {
+		return this.call("aria2.getPeers", [gid]);
+	}
+
+	/** HTTP(S)/FTP servers each file of an active download is connected to. */
+	getServers(gid: Aria2Gid): Promise<Aria2FileServers[]> {
+		return this.call("aria2.getServers", [gid]);
+	}
+
+	/** Forgets a completed, errored or removed download. */
+	removeDownloadResult(gid: Aria2Gid): Promise<"OK"> {
+		return this.call("aria2.removeDownloadResult", [gid]);
 	}
 
 	/** Engine version and compiled-in features. */

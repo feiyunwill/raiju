@@ -3,12 +3,34 @@ import type { Storage } from "@/data/types";
 import { formatBytes } from "@/lib/format";
 
 type StorageCardProps = {
-	storage: Storage;
+	storage: Storage | null;
 	incomingBytes: number;
 };
 
 /** Internal NVMe usage split into installed games, Raiju staging and free space. */
 export function StorageCard({ storage, incomingBytes }: StorageCardProps) {
+	if (!storage) {
+		return (
+			<section className="surface flex flex-col gap-5 p-5 md:p-6">
+				<div className="flex items-center justify-between">
+					<p className="text-muted-foreground text-[13px]">Internal storage</p>
+					<HardDrive
+						className="text-muted-foreground size-4"
+						strokeWidth={1.5}
+					/>
+				</div>
+				<div className="bg-foreground/10 h-2 w-full rounded-full" />
+				<p className="text-muted-foreground text-[13px]">
+					Free space shows up once Raiju's console API is connected.
+				</p>
+				{incomingBytes > 0 && (
+					<p className="bg-foreground/[0.05] rounded-xl px-3 py-2 text-xs">
+						Queue needs {formatBytes(incomingBytes)}
+					</p>
+				)}
+			</section>
+		);
+	}
 	const free = Math.max(
 		0,
 		storage.totalBytes - storage.gamesBytes - storage.stagingBytes,

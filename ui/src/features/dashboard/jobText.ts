@@ -20,7 +20,9 @@ export function jobStatusLine(job: Job): string {
 		return `Failed while ${stageVerbs[job.stage].toLowerCase()}`;
 	}
 	if (job.status === "done") {
-		return `Installed as ${job.installName}`;
+		return job.stage === "ready"
+			? `Installed as ${job.installName}`
+			: `Downloaded · ${formatBytes(job.totalBytes)}`;
 	}
 	if (job.status === "waiting") {
 		return `Waiting · ${formatBytes(job.totalBytes)}`;

@@ -14,12 +14,12 @@ export function createMockDashboard(): Dashboard {
 	const jobs: Job[] = [
 		{
 			id: "a1",
-			titleId: "PPSA24003",
-			name: "Neon Drift",
-			sourceName: "PPSA24003-neon-drift.7z",
+			titleId: "PPSA25380",
+			name: "Elden Ring Nightreign",
+			sourceName: "PPSA25380-elden-ring-nightreign.7z",
 			kind: "archive",
 			format: "7z",
-			installName: "PPSA24003.exfat",
+			installName: "PPSA25380.exfat",
 			stage: "download",
 			status: "active",
 			totalBytes: 68.4 * GB,
@@ -62,12 +62,12 @@ export function createMockDashboard(): Dashboard {
 		},
 		{
 			id: "d4",
-			titleId: "PPSA05519",
-			name: "Echoes of Iron",
-			sourceName: "PPSA05519.exfat",
+			titleId: "CUSA00003",
+			name: "Driveclub",
+			sourceName: "CUSA00003.exfat",
 			kind: "image",
 			format: "exfat",
-			installName: "PPSA05519.exfat",
+			installName: "CUSA00003.exfat",
 			stage: "ready",
 			status: "done",
 			totalBytes: 52.9 * GB,
@@ -115,6 +115,7 @@ export function createMockDashboard(): Dashboard {
 			version: "0.1.0",
 			uptimeSeconds: 3 * 3600 + 12 * 60,
 		},
+		notice: null,
 	};
 }
 
@@ -177,13 +178,13 @@ export function tickMockDashboard(state: Dashboard): Dashboard {
 		...state,
 		jobs,
 		speedHistory: [...state.speedHistory.slice(1), downloadSpeed],
-		storage: {
+		storage: state.storage && {
 			...state.storage,
 			stagingBytes: state.storage.stagingBytes + downloadedThisTick,
 		},
 		console: {
 			...state.console,
-			uptimeSeconds: state.console.uptimeSeconds + 1,
+			uptimeSeconds: (state.console.uptimeSeconds ?? 0) + 1,
 		},
 	};
 }

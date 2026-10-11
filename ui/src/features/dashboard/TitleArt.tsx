@@ -1,4 +1,6 @@
 import { cn } from "cn";
+import { useState } from "react";
+import { useArtwork } from "@/artwork/useArtwork";
 
 type TitleArtProps = {
 	titleId: string;
@@ -24,13 +26,16 @@ function initials(name: string): string {
 		.join("");
 }
 
-/** Monochrome generated cover for a title until real artwork is available from ShadowMountPlus. */
+/** Official cover art for a title when known, otherwise a monochrome generated tile with its initials. */
 export function TitleArt({
 	titleId,
 	name,
 	className,
 	showTitleId = true,
 }: TitleArtProps) {
+	const artwork = useArtwork(titleId);
+	const [failed, setFailed] = useState<string | null>(null);
+	const icon = artwork?.icon && failed !== artwork.icon ? artwork.icon : null;
 	const seed = hash(titleId);
 	const angle = seed % 360;
 	const light = 0.22 + (seed % 7) * 0.025;
@@ -45,9 +50,21 @@ export function TitleArt({
 				backgroundImage: `radial-gradient(120% 90% at ${20 + (seed % 60)}% 0%, oklch(${light + 0.18} 0 0), transparent 60%), linear-gradient(${angle}deg, oklch(${light} 0 0), oklch(0.1 0 0))`,
 			}}
 		>
-			<span className="absolute inset-0 flex items-center justify-center text-[2.2em] font-light tracking-tight text-white/90">
-				{initials(name)}
-			</span>
+			{icon ? (
+				<img
+					src={icon}
+					alt=""
+					loading="lazy"
+					decoding="async"
+					referrerPolicy="no-referrer"
+					onError={() => setFailed(icon)}
+					className="absolute inset-0 size-full object-cover"
+				/>
+			) : (
+				<span className="absolute inset-0 flex items-center justify-center text-[2.2em] font-light tracking-tight text-white/90">
+					{initials(name)}
+				</span>
+			)}
 			{showTitleId && (
 				<span className="relative m-[0.6em] rounded-full bg-black/40 px-[0.6em] py-[0.15em] font-mono text-[0.55em] tracking-wider text-white/70 backdrop-blur">
 					{titleId}

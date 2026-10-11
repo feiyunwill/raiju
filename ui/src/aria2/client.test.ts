@@ -167,6 +167,11 @@ describe("Aria2Client against a real aria2c", () => {
 		expect(
 			await client.changeOption(gid, { "max-download-limit": "512K" }),
 		).toBe("OK");
+		expect((await client.getOption(gid))["max-download-limit"]).toBe("524288");
+		const fileServer = await waitFor(
+			async () => (await client.getServers(gid))[0]?.servers[0],
+		);
+		expect(fileServer.uri).toContain("/slow.bin");
 		const stat = await client.getGlobalStat();
 		expect(Number(stat.numActive)).toBeGreaterThanOrEqual(1);
 
@@ -186,6 +191,8 @@ describe("Aria2Client against a real aria2c", () => {
 		await waitFor(() => sawEvent(gid, "aria2.onDownloadStop"));
 		const removed = await client.tellStatus(gid, ["status"]);
 		expect(removed.status).toBe("removed");
+		expect(await client.removeDownloadResult(gid)).toBe("OK");
+		await expect(client.tellStatus(gid)).rejects.toBeInstanceOf(Aria2RpcError);
 	});
 
 	test("pauseAll and unpauseAll act on every download", async () => {

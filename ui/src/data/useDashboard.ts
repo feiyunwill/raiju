@@ -1,137 +1,46 @@
-import { useCallback, useEffect, useState } from "react";
-import { createMockDashboard, tickMockDashboard } from "./mock";
-import type { Dashboard, Job, JobKind, JobStatus } from "./types";
+import { useEffect, useSyncExternalStore } from "react";
+import { createAria2Source } from "./aria2Source";
+import { createMockSource } from "./mockSource";
+import type {
+	Dashboard,
+	DashboardActions,
+	DashboardSource,
+	SourceMode,
+} from "./types";
 
-export type DashboardActions = {
-	togglePause: (id: string) => void;
-	pauseAll: () => void;
-	resumeAll: () => void;
-	retry: (id: string) => void;
-	addLinks: (links: string[]) => void;
-};
+let source: DashboardSource | null = null;
 
-function setStatus(
-	state: Dashboard,
-	predicate: (status: JobStatus) => boolean,
-	status: JobStatus,
-): Dashboard {
-	return {
-		...state,
-		jobs: state.jobs.map((job) =>
-			predicate(job.status)
-				? { ...job, status, speed: 0, connections: 0 }
-				: job,
-		),
-	};
+/**
+ * Picks the data source once: demo when `VITE_DEMO=true`, otherwise aria2 at `VITE_ARIA2_URL`, otherwise
+ * the gateway's `/jsonrpc` on the serving origin in production builds, and the demo in plain development.
+ */
+export function getDashboardSource(): DashboardSource {
+	if (source) {
+		return source;
+	}
+	const env = import.meta.env;
+	if (env.VITE_DEMO === "true") {
+		source = createMockSource();
+	} else if (env.VITE_ARIA2_URL) {
+		source = createAria2Source(
+			env.VITE_ARIA2_URL,
+			env.VITE_ARIA2_SECRET || undefined,
+		);
+	} else if (env.PROD) {
+		source = createAria2Source(`${window.location.origin}/jsonrpc`);
+	} else {
+		source = createMockSource();
+	}
+	return source;
 }
 
-const imageFormats = ["ffpkg", "exfat", "ffpfs", "ffpfsc"];
-
-/** Builds a waiting demo job from a pasted link, guessing title ID, kind and install name from the file name. */
-export function jobFromLink(link: string, index: number): Job {
-	const sourceName = decodeURIComponent(
-		link.split(/[?#]/)[0].split("/").pop() || link,
-	);
-	const format = (
-		sourceName.match(/\.([a-z0-9]+)$/i)?.[1] ?? "bin"
-	).toLowerCase();
-	const titleId = sourceName.match(/(PPSA|CUSA)\d{5}/)?.[0] ?? "UNKNOWN";
-	const kind: JobKind = imageFormats.includes(format) ? "image" : "archive";
-	const name = sourceName
-		.replace(/\.[^.]+$/, "")
-		.replace(/(PPSA|CUSA)\d{5}/, "")
-		.replace(/[-_.]+/g, " ")
-		.trim()
-		.replace(/\b\w/g, (c) => c.toUpperCase());
-	const totalBytes = (18 + ((index * 7919) % 50)) * 1_000_000_000;
-	return {
-		id: `${Date.now().toString(36)}-${index}`,
-		titleId,
-		name: name || titleId,
-		sourceName,
-		kind,
-		format,
-		installName: kind === "image" ? `${titleId}.${format}` : `${titleId}.exfat`,
-		stage: "download",
-		status: "waiting",
-		totalBytes,
-		stageBytes: totalBytes,
-		stageDoneBytes: 0,
-		speed: 0,
-		connections: 0,
-	};
-}
-
-/** Live dashboard state. Backed by a one-second demo simulation until the aria2 client (#10) replaces it. */
-export function useDashboard(): [Dashboard, DashboardActions] {
-	const [state, setState] = useState(createMockDashboard);
-
+/** Live dashboard state, the actions that change it, and whether it comes from the demo or a console. */
+export function useDashboard(): [Dashboard, DashboardActions, SourceMode] {
+	const current = getDashboardSource();
 	useEffect(() => {
-		const timer = window.setInterval(() => {
-			if (document.visibilityState === "visible") {
-				setState(tickMockDashboard);
-			}
-		}, 1000);
-		return () => window.clearInterval(timer);
-	}, []);
-
-	const togglePause = useCallback((id: string) => {
-		setState((current) => ({
-			...current,
-			jobs: current.jobs.map((job) => {
-				if (job.id !== id) {
-					return job;
-				}
-				if (job.status === "active") {
-					return { ...job, status: "paused", speed: 0, connections: 0 };
-				}
-				if (job.status === "paused" || job.status === "waiting") {
-					return { ...job, status: "active" };
-				}
-				return job;
-			}),
-		}));
-	}, []);
-
-	const pauseAll = useCallback(
-		() =>
-			setState((current) =>
-				setStatus(current, (s) => s === "active" || s === "waiting", "paused"),
-			),
-		[],
-	);
-
-	const resumeAll = useCallback(
-		() =>
-			setState((current) =>
-				setStatus(current, (s) => s === "paused", "active"),
-			),
-		[],
-	);
-
-	const retry = useCallback((id: string) => {
-		setState((current) => ({
-			...current,
-			jobs: current.jobs.map((job) =>
-				job.id === id
-					? {
-							...job,
-							status: "waiting",
-							stage: "download",
-							stageDoneBytes: 0,
-							error: undefined,
-						}
-					: job,
-			),
-		}));
-	}, []);
-
-	const addLinks = useCallback((links: string[]) => {
-		setState((current) => ({
-			...current,
-			jobs: [...current.jobs, ...links.map(jobFromLink)],
-		}));
-	}, []);
-
-	return [state, { togglePause, pauseAll, resumeAll, retry, addLinks }];
+		current.start();
+		return () => current.stop();
+	}, [current]);
+	const state = useSyncExternalStore(current.subscribe, current.getState);
+	return [state, current.actions, current.mode];
 }

@@ -128,6 +128,15 @@
 	--sidebar-ring: oklch(0.98 0 0);
 }
 
+@keyframes raiju-indeterminate {
+	0% {
+		left: -33%;
+	}
+	100% {
+		left: 100%;
+	}
+}
+
 @utility surface {
 	border-radius: var(--radius-3xl);
 	background-color: color-mix(in oklch, var(--card) 72%, transparent);

@@ -5,7 +5,7 @@
 		"lib": ["ES2023"],
 		"types": ["node"],
 		"skipLibCheck": true,
-		"module": "nodenext",
+		"module": "esnext",
 		"allowImportingTsExtensions": true,
 		"verbatimModuleSyntax": true,
 		"moduleDetection": "force",
@@ -13,7 +13,8 @@
 		"noUnusedLocals": true,
 		"noUnusedParameters": true,
 		"erasableSyntaxOnly": true,
-		"noFallthroughCasesInSwitch": true
+		"noFallthroughCasesInSwitch": true,
+		"moduleResolution": "bundler"
 	},
-	"include": ["vite.config.ts"]
+	"include": ["vite.config.ts", "src/artwork/server.ts", "src/artwork/parse.ts"]
 }
