@@ -9,6 +9,8 @@ int main(void) {
 	run_classify_tests();
 	printf("image_check\n");
 	run_image_check_tests();
+	printf("image_fs\n");
+	run_image_fs_tests();
 	printf("inspect\n");
 	run_inspect_tests();
 	printf("title_id\n");

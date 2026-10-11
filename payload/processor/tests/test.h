@@ -59,6 +59,11 @@ void run_classify_tests(void);
 void run_image_check_tests(void);
 
 /**
+ * Runs the exFAT and UFS2 param.json reader tests.
+ */
+void run_image_fs_tests(void);
+
+/**
  * Runs the end-to-end file inspection tests against temporary files.
  */
 void run_inspect_tests(void);

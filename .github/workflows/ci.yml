@@ -63,6 +63,16 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install libarchive pkg-config
       - run: make -C payload/processor test
+      - name: Install image tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y makefs exfatprogs exfat-fuse fuse3 rsync
+      - name: Read param.json from generated images
+        if: runner.os == 'Linux'
+        run: |
+          images="$(sh payload/processor/tests/make_images.sh "$RUNNER_TEMP/images")"
+          RAIJU_TEST_IMAGES="$images" make -C payload/processor test
 
   ui-tests:
     name: UI tests
