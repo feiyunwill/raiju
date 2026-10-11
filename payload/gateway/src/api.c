@@ -247,6 +247,21 @@ static uint64_t monotonic_ms(void) {
  * Applies the one stage/status/install-name mapping to a job, filling the
  * snapshot record every read serves.
  */
+/**
+ * The total of the stage running now: the size a download expects, or the archive's
+ * uncompressed size while extracting. 0 when that size is unknown, which is what a
+ * tar.* download reports until it has been read, so a client falls back to bytes moved.
+ */
+static uint64_t stage_total_of(const raiju_job *job) {
+	if (job->stage == RAIJU_STAGE_DOWNLOADING) {
+		return job->expected_size;
+	}
+	if (job->stage == RAIJU_STAGE_EXTRACTING) {
+		return job->uncompressed_size;
+	}
+	return 0;
+}
+
 static void fill_view(raiju_api_job_view *view, const raiju_job *job) {
 	raiju_stage bucket = job->stage == RAIJU_STAGE_FAILED ? job->failed_stage : job->stage;
 	snprintf(view->id, sizeof view->id, "%s", job->id);
@@ -259,6 +274,7 @@ static void fill_view(raiju_api_job_view *view, const raiju_job *job) {
 	snprintf(view->kind, sizeof view->kind, "%s", raiju_kind_name(job->kind));
 	snprintf(view->error, sizeof view->error, "%s", job->error);
 	view->bytes_total = job->expected_size;
+	view->bytes_stage_total = stage_total_of(job);
 	view->bytes_done = job->progress_done;
 }
 
@@ -286,6 +302,8 @@ static void raiju_api_job_view_json(raiju_strbuf *out, const raiju_api_job_view 
 	raiju_strbuf_append_json_string(out, view->install_name);
 	raiju_strbuf_append(out, ",\"bytesTotal\":");
 	raiju_strbuf_append_uint(out, (unsigned long long)view->bytes_total);
+	raiju_strbuf_append(out, ",\"bytesStageTotal\":");
+	raiju_strbuf_append_uint(out, (unsigned long long)view->bytes_stage_total);
 	raiju_strbuf_append(out, ",\"bytesDone\":");
 	raiju_strbuf_append_uint(out, (unsigned long long)view->bytes_done);
 	raiju_strbuf_append(out, ",\"error\":");

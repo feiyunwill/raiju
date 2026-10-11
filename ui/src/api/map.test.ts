@@ -22,6 +22,7 @@ function jobFrom(overrides: Partial<ApiJob> = {}): ApiJob {
 		kind: "7z",
 		installName: "PPSA25380.exfat",
 		bytesTotal: 68_400_000_000,
+		bytesStageTotal: 68_400_000_000,
 		bytesDone: 29_200_000_000,
 		error: "",
 		...overrides,

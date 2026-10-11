@@ -46,9 +46,18 @@ describe("waiting states", () => {
 });
 
 describe("stage figures", () => {
-	test("a download has a percentage, every other stage doesn't", () => {
+	test("a download and an extract have a percentage, the rest don't", () => {
 		expect(jobStageProgress(jobFrom())).toBe(50);
-		expect(jobStageProgress(jobFrom({ stage: "extract" }))).toBeNull();
+		expect(
+			jobStageProgress(
+				jobFrom({
+					stage: "extract",
+					stageBytes: 4_000_000_000,
+					stageDoneBytes: 1_500_000_000,
+				}),
+			),
+		).toBe(37.5);
+		expect(jobStageProgress(jobFrom({ stage: "install" }))).toBeNull();
 		expect(
 			jobStageProgress(jobFrom({ stage: "download", stageBytes: 0 })),
 		).toBeNull();
@@ -58,9 +67,22 @@ describe("stage figures", () => {
 		expect(jobStageFigure(jobFrom())).toBe("50.0%");
 		expect(
 			jobStageFigure(
-				jobFrom({ stage: "extract", stageDoneBytes: 1_500_000_000 }),
+				jobFrom({
+					stage: "extract",
+					stageBytes: 0,
+					stageDoneBytes: 1_500_000_000,
+				}),
 			),
 		).toBe("1.5 GB");
+		expect(
+			jobStageFigure(
+				jobFrom({
+					stage: "extract",
+					stageBytes: 4_000_000_000,
+					stageDoneBytes: 1_500_000_000,
+				}),
+			),
+		).toBe("37.5%");
 	});
 
 	test("remaining time only exists while a download is running", () => {
@@ -78,6 +100,17 @@ describe("jobStatusLine", () => {
 			jobStatusLine(
 				jobFrom({
 					stage: "extract",
+					stageBytes: 4_000_000_000,
+					stageDoneBytes: 1_500_000_000,
+					speed: 142_000_000,
+				}),
+			),
+		).toBe("Extracting · 37.5% · 142 MB/s");
+		expect(
+			jobStatusLine(
+				jobFrom({
+					stage: "extract",
+					stageBytes: 0,
 					stageDoneBytes: 1_500_000_000,
 					speed: 142_000_000,
 				}),

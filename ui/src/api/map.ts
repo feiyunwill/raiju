@@ -121,9 +121,9 @@ export type LiveFigures = {
 };
 
 /**
- * Maps one API job to a dashboard job. `bytesTotal` is the download's expected size and `bytesDone`
- * the progress of the stage running now, so a stage that has no byte figures of its own reads as
- * indeterminate rather than as a made-up percentage. A job that waits in the install stage is
+ * Maps one API job to a dashboard job. `bytesTotal` is the download's expected size, `bytesStageTotal`
+ * the total of the stage running now and `bytesDone` that stage's progress, so a stage whose total the
+ * API does not know reads as indeterminate rather than as a made-up percentage. A job that waits in the install stage is
  * waiting on a name conflict; one that waits in the verify stage is waiting for a title ID.
  */
 export function apiJobToJob(job: ApiJob, live: LiveFigures = {}): Job {
@@ -144,7 +144,7 @@ export function apiJobToJob(job: ApiJob, live: LiveFigures = {}): Job {
 		stage: job.uiStage as Stage,
 		status: live.status ?? (job.status as JobStatus),
 		totalBytes: job.bytesTotal,
-		stageBytes: job.bytesTotal,
+		stageBytes: job.bytesStageTotal,
 		stageDoneBytes: job.bytesDone,
 		speed: live.speed ?? 0,
 		connections: live.connections ?? 0,

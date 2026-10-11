@@ -31,7 +31,8 @@ export function jobStageVerb(job: Job): string {
 
 /** Percentage of the stage running now, or null when the API carries no size for that stage. */
 export function jobStageProgress(job: Job): number | null {
-	return job.stage === "download" && job.stageBytes > 0
+	return (job.stage === "download" || job.stage === "extract") &&
+		job.stageBytes > 0
 		? (job.stageDoneBytes / job.stageBytes) * 100
 		: null;
 }
@@ -74,9 +75,10 @@ export function jobStatusLine(job: Job): string {
 	return parts.join(" · ");
 }
 
-/** Remaining time for the current stage of an active job. */
+/** Remaining time for the current stage of an active job. `speed` is the download's rate, so only a
+ * download gets an estimate; extraction progress is not a byte rate the same way. */
 export function jobEta(job: Job): string {
-	if (job.status !== "active" || job.speed <= 0) {
+	if (job.status !== "active" || job.stage !== "download" || job.speed <= 0) {
 		return "—";
 	}
 	const percent = jobStageProgress(job);

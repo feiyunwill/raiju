@@ -237,6 +237,33 @@ static void the_stage_status_mapping_is_stable(void) {
 	}
 }
 
+static void the_stage_total_tracks_the_running_stage(void) {
+	struct {
+		raiju_stage stage;
+		uint64_t expected;
+		uint64_t uncompressed;
+		const char *want;
+	} cases[] = {
+	    {RAIJU_STAGE_DOWNLOADING, 4294967296ull, 0, "\"bytesStageTotal\":4294967296"},
+	    {RAIJU_STAGE_EXTRACTING, 4294967296ull, 8589934592ull, "\"bytesStageTotal\":8589934592"},
+	    {RAIJU_STAGE_EXTRACTING, 4294967296ull, 0, "\"bytesStageTotal\":0"},
+	    {RAIJU_STAGE_INSTALLING, 4294967296ull, 8589934592ull, "\"bytesStageTotal\":0"},
+	};
+	for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+		raiju_job job;
+		memset(&job, 0, sizeof job);
+		snprintf(job.id, sizeof job.id, "job-1");
+		job.stage = cases[i].stage;
+		job.expected_size = cases[i].expected;
+		job.uncompressed_size = cases[i].uncompressed;
+		raiju_strbuf document;
+		raiju_strbuf_init(&document);
+		raiju_api_job_json(&document, &job);
+		CHECK(strstr(raiju_strbuf_cstr(&document), cases[i].want) != NULL);
+		raiju_strbuf_free(&document);
+	}
+}
+
 static void jobs_create_list_get_and_refuse(void) {
 	raiju_fixture_server *server = raiju_fixture_server_start();
 	CHECK(server != NULL);
@@ -499,6 +526,7 @@ void run_api_tests(void) {
 	RUN_TEST(storage_reports_the_platform_figures);
 	RUN_TEST(folders_browse_only_inside_the_roots);
 	RUN_TEST(the_stage_status_mapping_is_stable);
+	RUN_TEST(the_stage_total_tracks_the_running_stage);
 	RUN_TEST(jobs_create_list_get_and_refuse);
 	RUN_TEST(every_new_endpoint_needs_a_token);
 	RUN_TEST(jobs_reads_never_wait_for_the_queue);

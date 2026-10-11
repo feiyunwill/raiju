@@ -90,6 +90,7 @@ export type ApiJob = {
 	kind: ApiKind;
 	installName: string;
 	bytesTotal: number;
+	bytesStageTotal: number;
 	bytesDone: number;
 	error: string;
 };

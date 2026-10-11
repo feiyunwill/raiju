@@ -35,6 +35,7 @@ typedef struct {
 	char kind[RAIJU_STAGE_TOKEN_MAX];
 	char error[RAIJU_JOB_ERROR_MAX];
 	uint64_t bytes_total;
+	uint64_t bytes_stage_total;
 	uint64_t bytes_done;
 } raiju_api_job_view;
 
