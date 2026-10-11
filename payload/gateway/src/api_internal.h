@@ -15,7 +15,28 @@
 #define RAIJU_API_MAX_CANCELS 64
 #define RAIJU_API_MAX_EVENTS 64
 #define RAIJU_API_TICK_MS 400
+#define RAIJU_API_VIEW_PUBLISH_MS 200
+#define RAIJU_STAGE_TOKEN_MAX 24
 #define RAIJU_STORAGE_TTL_SECONDS 30
+
+/**
+ * The published snapshot of one job: exactly the fields a job response
+ * needs, copied out of the queue under queue_lock and read back under
+ * view_lock so /api/jobs never waits for a running stage.
+ */
+typedef struct {
+	char id[RAIJU_JOB_ID_MAX + 1];
+	char stage[RAIJU_STAGE_TOKEN_MAX];
+	char ui_stage[RAIJU_STAGE_TOKEN_MAX];
+	char status[RAIJU_STAGE_TOKEN_MAX];
+	char title_id[RAIJU_TITLE_ID_LEN + 1];
+	char source_name[RAIJU_JOB_NAME_MAX];
+	char install_name[RAIJU_JOB_PATH_MAX];
+	char kind[RAIJU_STAGE_TOKEN_MAX];
+	char error[RAIJU_JOB_ERROR_MAX];
+	uint64_t bytes_total;
+	uint64_t bytes_done;
+} raiju_api_job_view;
 
 /**
  * One engine event waiting for the worker thread: the aria2 GID and, for a
@@ -38,7 +59,12 @@ typedef struct {
  * consults during extraction, so a cancel can stop a running job without
  * waiting on queue_lock; an empty slot is free to reuse. storage_lock guards
  * the games and staging byte counts, which are walked at most every
- * RAIJU_STORAGE_TTL_SECONDS so /api/storage stays cheap.
+ * RAIJU_STORAGE_TTL_SECONDS so /api/storage stays cheap. view_lock guards
+ * the published job snapshot (views/view_count/view_published_ms/view_stamp):
+ * the worker copies the queue into it under queue_lock, so the lock order is
+ * queue_lock then view_lock, while read handlers take view_lock alone and
+ * never wait on the queue. probe_lock serialises probes so only one runs at a
+ * time.
  */
 typedef struct raiju_api {
 	raiju_gateway *gateway;
@@ -46,6 +72,12 @@ typedef struct raiju_api {
 	bool worker_started;
 	pthread_t worker;
 	pthread_mutex_t queue_lock;
+	pthread_mutex_t view_lock;
+	raiju_api_job_view *views;
+	size_t view_count;
+	uint64_t view_published_ms;
+	uint64_t view_stamp;
+	pthread_mutex_t probe_lock;
 	pthread_mutex_t event_lock;
 	pthread_mutex_t wake_lock;
 	pthread_cond_t wake_signal;

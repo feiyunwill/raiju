@@ -232,43 +232,124 @@ static const char *install_name_of(const raiju_job *job) {
 	return job->title_id;
 }
 
-void raiju_api_job_json(raiju_strbuf *out, const raiju_job *job) {
+/**
+ * Milliseconds on the monotonic clock, for the snapshot publish throttle.
+ */
+static uint64_t monotonic_ms(void) {
+	struct timespec now;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+		return 0;
+	}
+	return (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000;
+}
+
+/**
+ * Applies the one stage/status/install-name mapping to a job, filling the
+ * snapshot record every read serves.
+ */
+static void fill_view(raiju_api_job_view *view, const raiju_job *job) {
 	raiju_stage bucket = job->stage == RAIJU_STAGE_FAILED ? job->failed_stage : job->stage;
+	snprintf(view->id, sizeof view->id, "%s", job->id);
+	snprintf(view->stage, sizeof view->stage, "%s", raiju_stage_name(job->stage));
+	snprintf(view->ui_stage, sizeof view->ui_stage, "%s", ui_stage_name(bucket));
+	snprintf(view->status, sizeof view->status, "%s", ui_status_name(job->stage));
+	snprintf(view->title_id, sizeof view->title_id, "%s", job->title_id);
+	snprintf(view->source_name, sizeof view->source_name, "%s", job->file_name);
+	snprintf(view->install_name, sizeof view->install_name, "%s", install_name_of(job));
+	snprintf(view->kind, sizeof view->kind, "%s", raiju_kind_name(job->kind));
+	snprintf(view->error, sizeof view->error, "%s", job->error);
+	view->bytes_total = job->expected_size;
+	view->bytes_done = job->progress_done;
+}
+
+/**
+ * Serialises a snapshot record in the API shape described in ARCHITECTURE.md.
+ */
+static void raiju_api_job_view_json(raiju_strbuf *out, const raiju_api_job_view *view) {
 	raiju_strbuf_append(out, "{\"id\":");
-	raiju_strbuf_append_json_string(out, job->id);
+	raiju_strbuf_append_json_string(out, view->id);
 	raiju_strbuf_append(out, ",\"stage\":");
-	raiju_strbuf_append_json_string(out, raiju_stage_name(job->stage));
+	raiju_strbuf_append_json_string(out, view->stage);
 	raiju_strbuf_append(out, ",\"uiStage\":");
-	raiju_strbuf_append_json_string(out, ui_stage_name(bucket));
+	raiju_strbuf_append_json_string(out, view->ui_stage);
 	raiju_strbuf_append(out, ",\"status\":");
-	raiju_strbuf_append_json_string(out, ui_status_name(job->stage));
+	raiju_strbuf_append_json_string(out, view->status);
 	raiju_strbuf_append(out, ",\"titleId\":");
-	raiju_strbuf_append_json_string(out, job->title_id);
+	raiju_strbuf_append_json_string(out, view->title_id);
 	raiju_strbuf_append(out, ",\"sourceName\":");
-	raiju_strbuf_append_json_string(out, job->file_name);
+	raiju_strbuf_append_json_string(out, view->source_name);
 	raiju_strbuf_append(out, ",\"name\":");
-	raiju_strbuf_append_json_string(out, job->file_name);
+	raiju_strbuf_append_json_string(out, view->source_name);
 	raiju_strbuf_append(out, ",\"kind\":");
-	raiju_strbuf_append_json_string(out, raiju_kind_name(job->kind));
+	raiju_strbuf_append_json_string(out, view->kind);
 	raiju_strbuf_append(out, ",\"installName\":");
-	raiju_strbuf_append_json_string(out, install_name_of(job));
+	raiju_strbuf_append_json_string(out, view->install_name);
 	raiju_strbuf_append(out, ",\"bytesTotal\":");
-	raiju_strbuf_append_uint(out, (unsigned long long)job->expected_size);
+	raiju_strbuf_append_uint(out, (unsigned long long)view->bytes_total);
 	raiju_strbuf_append(out, ",\"bytesDone\":");
-	raiju_strbuf_append_uint(out, (unsigned long long)job->progress_done);
+	raiju_strbuf_append_uint(out, (unsigned long long)view->bytes_done);
 	raiju_strbuf_append(out, ",\"error\":");
-	raiju_strbuf_append_json_string(out, job->error);
+	raiju_strbuf_append_json_string(out, view->error);
 	raiju_strbuf_append_char(out, '}');
+}
+
+/**
+ * A cheap stamp of what the snapshot shows, so the queue is only copied into
+ * it when a stage or a progress figure actually moved.
+ */
+static uint64_t queue_stamp(const raiju_api *api) {
+	uint64_t stamp = 1469598103934665603ull ^ (uint64_t)api->processor.list.count;
+	for (size_t i = 0; i < api->processor.list.count; i++) {
+		const raiju_job *job = &api->processor.list.jobs[i];
+		stamp = (stamp ^ (uint64_t)job->stage) * 1099511628211ull;
+		stamp = (stamp ^ job->progress_done) * 1099511628211ull;
+	}
+	return stamp;
+}
+
+/**
+ * Copies the queue into the published snapshot under view_lock, once its
+ * visible state changed and at most every RAIJU_API_VIEW_PUBLISH_MS unless
+ * force is set. Callers hold queue_lock, so the lock order is queue_lock then
+ * view_lock.
+ */
+static void publish_views(raiju_api *api, bool force) {
+	uint64_t now = monotonic_ms();
+	uint64_t stamp = queue_stamp(api);
+	pthread_mutex_lock(&api->view_lock);
+	if (!force && (stamp == api->view_stamp || now - api->view_published_ms < RAIJU_API_VIEW_PUBLISH_MS)) {
+		pthread_mutex_unlock(&api->view_lock);
+		return;
+	}
+	size_t count = api->processor.list.count;
+	if (count > RAIJU_JOBS_MAX) {
+		count = RAIJU_JOBS_MAX;
+	}
+	for (size_t i = 0; i < count; i++) {
+		fill_view(&api->views[i], &api->processor.list.jobs[i]);
+	}
+	api->view_count = count;
+	api->view_published_ms = now;
+	api->view_stamp = stamp;
+	pthread_mutex_unlock(&api->view_lock);
+}
+
+void raiju_api_job_json(raiju_strbuf *out, const raiju_job *job) {
+	raiju_api_job_view view;
+	fill_view(&view, job);
+	raiju_api_job_view_json(out, &view);
 }
 
 void raiju_api_jobs_json(raiju_api *api, raiju_strbuf *out) {
 	raiju_strbuf_append(out, "{\"jobs\":[");
-	for (size_t i = 0; i < api->processor.list.count; i++) {
+	pthread_mutex_lock(&api->view_lock);
+	for (size_t i = 0; i < api->view_count; i++) {
 		if (i > 0) {
 			raiju_strbuf_append_char(out, ',');
 		}
-		raiju_api_job_json(out, &api->processor.list.jobs[i]);
+		raiju_api_job_view_json(out, &api->views[i]);
 	}
+	pthread_mutex_unlock(&api->view_lock);
 	raiju_strbuf_append(out, "]}");
 }
 
@@ -486,6 +567,7 @@ static raiju_extract_control api_progress(const raiju_job *job, uint64_t done, u
 		}
 	}
 	pthread_mutex_unlock(&api->cancel_lock);
+	publish_views(api, false);
 	return control;
 }
 
@@ -508,21 +590,26 @@ static bool take_event(raiju_api *api, raiju_api_event *out) {
 	return taken;
 }
 
-static void apply_events(raiju_api *api) {
+static bool apply_events(raiju_api *api) {
+	bool changed = false;
 	raiju_api_event event;
 	while (take_event(api, &event)) {
 		if (event.failed) {
-			raiju_processor_download_failed(&api->processor, event.gid, event.message);
+			if (raiju_processor_download_failed(&api->processor, event.gid, event.message) == RAIJU_PROCESSOR_OK) {
+				changed = true;
+			}
 			continue;
 		}
 		char path[RAIJU_JOB_PATH_MAX];
-		if (engine_status_path(api->gateway, event.gid, path, sizeof path)) {
-			raiju_processor_download_complete(&api->processor, event.gid, path, 0);
+		if (engine_status_path(api->gateway, event.gid, path, sizeof path) &&
+		    raiju_processor_download_complete(&api->processor, event.gid, path, 0) == RAIJU_PROCESSOR_OK) {
+			changed = true;
 		}
 	}
+	return changed;
 }
 
-static void poll_downloads(raiju_api *api) {
+static bool poll_downloads(raiju_api *api) {
 	bool pending = false;
 	for (size_t i = 0; i < api->processor.list.count; i++) {
 		if (api->processor.list.jobs[i].stage == RAIJU_STAGE_DOWNLOADING) {
@@ -531,8 +618,9 @@ static void poll_downloads(raiju_api *api) {
 		}
 	}
 	if (!pending) {
-		return;
+		return false;
 	}
+	bool changed = false;
 	for (size_t i = 0; i < api->processor.list.count; i++) {
 		raiju_job *job = &api->processor.list.jobs[i];
 		if (job->stage != RAIJU_STAGE_DOWNLOADING) {
@@ -544,13 +632,17 @@ static void poll_downloads(raiju_api *api) {
 			continue;
 		}
 		if (strcmp(status, "complete") == 0) {
-			if (engine_status_path(api->gateway, job->id, path, sizeof path)) {
-				raiju_processor_download_complete(&api->processor, job->id, path, 0);
+			if (engine_status_path(api->gateway, job->id, path, sizeof path) &&
+			    raiju_processor_download_complete(&api->processor, job->id, path, 0) == RAIJU_PROCESSOR_OK) {
+				changed = true;
 			}
 		} else if (strcmp(status, "error") == 0) {
-			raiju_processor_download_failed(&api->processor, job->id, "download_error");
+			if (raiju_processor_download_failed(&api->processor, job->id, "download_error") == RAIJU_PROCESSOR_OK) {
+				changed = true;
+			}
 		}
 	}
+	return changed;
 }
 
 static void *api_worker(void *argument) {
@@ -572,9 +664,15 @@ static void *api_worker(void *argument) {
 			break;
 		}
 		pthread_mutex_lock(&api->queue_lock);
-		apply_events(api);
-		poll_downloads(api);
+		bool changed = apply_events(api);
+		if (poll_downloads(api)) {
+			changed = true;
+		}
+		if (changed) {
+			publish_views(api, true);
+		}
 		raiju_processor_run(&api->processor);
+		publish_views(api, false);
 		pthread_mutex_unlock(&api->queue_lock);
 	}
 	return NULL;
@@ -902,11 +1000,9 @@ static raiju_category category_for_kind(const char *kind) {
 static int handle_jobs_list(const raiju_http_request *request, raiju_http_response *response, void *context) {
 	(void)request;
 	raiju_api *api = context;
-	pthread_mutex_lock(&api->queue_lock);
 	raiju_strbuf document;
 	raiju_strbuf_init(&document);
 	raiju_api_jobs_json(api, &document);
-	pthread_mutex_unlock(&api->queue_lock);
 	raiju_response_json(response, 200, raiju_strbuf_cstr(&document));
 	raiju_strbuf_free(&document);
 	return 200;
@@ -917,13 +1013,17 @@ static int handle_jobs_get(const raiju_http_request *request, raiju_http_respons
 	const char *id = request->param_count >= 1 ? request->params[0] : "";
 	raiju_strbuf document;
 	raiju_strbuf_init(&document);
-	pthread_mutex_lock(&api->queue_lock);
-	raiju_job *job = raiju_processor_find(&api->processor, id);
-	if (job != NULL) {
-		raiju_api_job_json(&document, job);
+	bool found = false;
+	pthread_mutex_lock(&api->view_lock);
+	for (size_t i = 0; i < api->view_count; i++) {
+		if (strcmp(api->views[i].id, id) == 0) {
+			raiju_api_job_view_json(&document, &api->views[i]);
+			found = true;
+			break;
+		}
 	}
-	pthread_mutex_unlock(&api->queue_lock);
-	if (document.length == 0) {
+	pthread_mutex_unlock(&api->view_lock);
+	if (!found) {
 		raiju_strbuf_free(&document);
 		raiju_response_error(response, 404, "not found");
 		return 404;
@@ -1029,6 +1129,7 @@ static int handle_jobs_create(const raiju_http_request *request, raiju_http_resp
 		return 502;
 	}
 	raiju_job *job = raiju_processor_find(&api->processor, id);
+	publish_views(api, true);
 	raiju_strbuf document;
 	raiju_strbuf_init(&document);
 	if (job != NULL) {
@@ -1046,6 +1147,7 @@ static int handle_jobs_retry(const raiju_http_request *request, raiju_http_respo
 	pthread_mutex_lock(&api->queue_lock);
 	raiju_processor_status status = raiju_processor_retry(&api->processor, id);
 	raiju_job *job = raiju_processor_find(&api->processor, id);
+	publish_views(api, true);
 	raiju_strbuf document;
 	raiju_strbuf_init(&document);
 	if (job != NULL) {
@@ -1089,6 +1191,7 @@ static int handle_jobs_cancel(const raiju_http_request *request, raiju_http_resp
 	pthread_mutex_lock(&api->queue_lock);
 	raiju_processor_status status = raiju_processor_cancel(&api->processor, id);
 	raiju_job *job = raiju_processor_find(&api->processor, id);
+	publish_views(api, true);
 	raiju_strbuf document;
 	raiju_strbuf_init(&document);
 	if (job != NULL) {
@@ -1128,6 +1231,7 @@ static int handle_jobs_resolve(const raiju_http_request *request, raiju_http_res
 	pthread_mutex_lock(&api->queue_lock);
 	raiju_processor_status status = raiju_processor_resolve(&api->processor, id, resolved);
 	raiju_job *job = raiju_processor_find(&api->processor, id);
+	publish_views(api, true);
 	raiju_strbuf document;
 	raiju_strbuf_init(&document);
 	if (job != NULL) {
@@ -1201,24 +1305,42 @@ struct raiju_api *raiju_api_register(raiju_gateway *gateway) {
 	pipeline.free_space = api_free_space;
 	pipeline.context = api;
 	pthread_mutex_init(&api->queue_lock, NULL);
+	pthread_mutex_init(&api->view_lock, NULL);
+	pthread_mutex_init(&api->probe_lock, NULL);
 	pthread_mutex_init(&api->event_lock, NULL);
 	pthread_mutex_init(&api->wake_lock, NULL);
 	pthread_cond_init(&api->wake_signal, NULL);
 	pthread_mutex_init(&api->cancel_lock, NULL);
 	pthread_mutex_init(&api->storage_lock, NULL);
-	if (raiju_processor_open(&api->processor, &pipeline, api->jobs_path) != RAIJU_PROCESSOR_OK) {
-		raiju_api_unregister(gateway);
+	api->views = calloc(RAIJU_JOBS_MAX, sizeof *api->views);
+	if (api->views == NULL) {
+		pthread_mutex_destroy(&api->queue_lock);
+		pthread_mutex_destroy(&api->view_lock);
+		pthread_mutex_destroy(&api->probe_lock);
+		pthread_mutex_destroy(&api->event_lock);
+		pthread_mutex_destroy(&api->wake_lock);
+		pthread_cond_destroy(&api->wake_signal);
+		pthread_mutex_destroy(&api->cancel_lock);
+		pthread_mutex_destroy(&api->storage_lock);
 		free(api);
 		return NULL;
 	}
+	if (raiju_processor_open(&api->processor, &pipeline, api->jobs_path) != RAIJU_PROCESSOR_OK) {
+		free(api->views);
+		free(api);
+		return NULL;
+	}
+	publish_views(api, true);
 	if (!raiju_api_add_core_routes(gateway, api) || !raiju_api_add_job_routes(gateway, api) ||
 	    !raiju_api_add_probe_route(gateway, api)) {
 		raiju_processor_close(&api->processor);
+		free(api->views);
 		free(api);
 		return NULL;
 	}
 	if (pthread_create(&api->worker, NULL, api_worker, api) != 0) {
 		raiju_processor_close(&api->processor);
+		free(api->views);
 		free(api);
 		return NULL;
 	}
@@ -1242,10 +1364,13 @@ void raiju_api_unregister(raiju_gateway *gateway) {
 	}
 	raiju_processor_close(&api->processor);
 	pthread_mutex_destroy(&api->queue_lock);
+	pthread_mutex_destroy(&api->view_lock);
+	pthread_mutex_destroy(&api->probe_lock);
 	pthread_mutex_destroy(&api->event_lock);
 	pthread_mutex_destroy(&api->wake_lock);
 	pthread_cond_destroy(&api->wake_signal);
 	pthread_mutex_destroy(&api->cancel_lock);
 	pthread_mutex_destroy(&api->storage_lock);
+	free(api->views);
 	free(api);
 }

@@ -1,11 +1,15 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE
 
+#include <archive_entry.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
+#include "api_internal.h"
+#include "archive_builder.h"
 #include "fake_platform.h"
 #include "fixture_server.h"
 #include "raiju/fetch.h"
@@ -129,9 +133,9 @@ static size_t build_sevenz(uint64_t unpacked_size, unsigned char *out, size_t ca
 	cursor += write_number(cursor, unpacked_size);
 	*cursor++ = 0x00;
 	*cursor++ = 0x07;
+	*cursor++ = 0x0B;
 	cursor += write_number(cursor, 1);
 	*cursor++ = 0x00;
-	*cursor++ = 0x0B;
 	cursor += write_number(cursor, 1);
 	*cursor++ = 0x01;
 	*cursor++ = 0x00;
@@ -264,6 +268,120 @@ static void probes_a_zip_and_a_sevenz(void) {
 	raiju_fixture_server_stop(server);
 }
 
+static size_t read_file_bytes(const char *path, unsigned char *out, size_t capacity) {
+	FILE *handle = fopen(path, "rb");
+	if (handle == NULL) {
+		return 0;
+	}
+	size_t length = fread(out, 1, capacity, handle);
+	fclose(handle);
+	return length;
+}
+
+static void probes_real_archives_written_by_libarchive(void) {
+	char directory[1024];
+	if (raiju_test_tmpdir(directory, sizeof directory, "probe-real") != 0) {
+		CHECK(false);
+		return;
+	}
+	unsigned char first[100];
+	unsigned char second[250];
+	memset(first, 'a', sizeof first);
+	memset(second, 'b', sizeof second);
+	const size_t expected_sum = sizeof first + sizeof second;
+	const fixture_entry entries[] = {
+	    {"first.bin", AE_IFREG, first, sizeof first, NULL},
+	    {"second.bin", AE_IFREG, second, sizeof second, NULL},
+	};
+	raiju_fixture_server *server = raiju_fixture_server_start();
+	CHECK(server != NULL);
+
+	char sevenz_path[1200];
+	snprintf(sevenz_path, sizeof sevenz_path, "%s/game.7z", directory);
+	int sevenz_status = archive_builder_write_ex(sevenz_path, FORMAT_7Z, entries, 2, true);
+	char zip_path[1200];
+	snprintf(zip_path, sizeof zip_path, "%s/game.zip", directory);
+	int zip_status = archive_builder_write(zip_path, FORMAT_ZIP, entries, 2);
+	if (sevenz_status == 1) {
+		printf("  (skipping real 7z: libarchive cannot write 7z on this host)\n");
+	}
+	if (zip_status == 1) {
+		printf("  (skipping real zip: libarchive cannot write zip on this host)\n");
+	}
+	CHECK(sevenz_status == 0 || sevenz_status == 1);
+	CHECK(zip_status == 0 || zip_status == 1);
+
+	unsigned char bytes[65536];
+	if (sevenz_status == 0) {
+		size_t length = read_file_bytes(sevenz_path, bytes, sizeof bytes);
+		CHECK(length > 32);
+		CHECK(raiju_fixture_server_add_file(server, "/real.7z", bytes, length));
+	}
+	if (zip_status == 0) {
+		size_t length = read_file_bytes(zip_path, bytes, sizeof bytes);
+		CHECK(length > 22);
+		CHECK(raiju_fixture_server_add_file(server, "/real.zip", bytes, length));
+	}
+
+	raiju_fake_platform fake;
+	char gateway_dir[1024];
+	raiju_gateway *gateway = make_gateway(&fake, gateway_dir, sizeof gateway_dir);
+	CHECK(gateway != NULL);
+	fake.free_bytes = 4ull * 1024 * 1024 * 1024;
+	char cookie[160];
+	pair_the_gateway(gateway, cookie, sizeof cookie);
+	char uri[128];
+	char body[2048];
+	char expected[64];
+	snprintf(expected, sizeof expected, "\"uncompressedSize\":%zu", expected_sum);
+
+	if (sevenz_status == 0) {
+		snprintf(uri, sizeof uri, "http://127.0.0.1:%u/real.7z", raiju_fixture_server_port(server));
+		CHECK_INT(probe(gateway, cookie, uri, body, sizeof body), 200);
+		CHECK(strstr(body, "\"kind\":\"7z\"") != NULL);
+		CHECK(strstr(body, "\"uncompressedKnown\":true") != NULL);
+		CHECK(strstr(body, expected) != NULL);
+	}
+	if (zip_status == 0) {
+		snprintf(uri, sizeof uri, "http://127.0.0.1:%u/real.zip", raiju_fixture_server_port(server));
+		CHECK_INT(probe(gateway, cookie, uri, body, sizeof body), 200);
+		CHECK(strstr(body, "\"kind\":\"zip\"") != NULL);
+		CHECK(strstr(body, "\"uncompressedKnown\":true") != NULL);
+		CHECK(strstr(body, expected) != NULL);
+	}
+
+	raiju_gateway_destroy(gateway);
+	raiju_test_rmtree(gateway_dir);
+	raiju_test_rmtree(directory);
+	raiju_fixture_server_stop(server);
+}
+
+static void a_probe_is_refused_while_another_runs(void) {
+	raiju_fixture_server *server = raiju_fixture_server_start();
+	CHECK(server != NULL);
+	static const char blob[] = "0123456789";
+	CHECK(raiju_fixture_server_add_file(server, "/blob.bin", blob, sizeof blob - 1));
+	raiju_fake_platform fake;
+	char directory[1024];
+	raiju_gateway *gateway = make_gateway(&fake, directory, sizeof directory);
+	CHECK(gateway != NULL);
+	char cookie[160];
+	pair_the_gateway(gateway, cookie, sizeof cookie);
+	raiju_api *api = gateway->api;
+	CHECK(api != NULL);
+	char uri[128];
+	snprintf(uri, sizeof uri, "http://127.0.0.1:%u/blob.bin", raiju_fixture_server_port(server));
+	char body[2048];
+	pthread_mutex_lock(&api->probe_lock);
+	CHECK_INT(probe(gateway, cookie, uri, body, sizeof body), 503);
+	CHECK(strstr(body, "probe_busy") != NULL);
+	pthread_mutex_unlock(&api->probe_lock);
+	CHECK_INT(probe(gateway, cookie, uri, body, sizeof body), 200);
+	raiju_gateway_destroy(gateway);
+	raiju_test_rmtree(directory);
+	raiju_fixture_server_stop(server);
+}
+
 static void fits_reflects_free_space(void) {
 	raiju_fixture_server *server = raiju_fixture_server_start();
 	CHECK(server != NULL);
@@ -295,5 +413,7 @@ static void fits_reflects_free_space(void) {
 
 void run_probe_tests(void) {
 	RUN_TEST(probes_a_zip_and_a_sevenz);
+	RUN_TEST(probes_real_archives_written_by_libarchive);
+	RUN_TEST(a_probe_is_refused_while_another_runs);
 	RUN_TEST(fits_reflects_free_space);
 }

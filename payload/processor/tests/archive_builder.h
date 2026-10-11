@@ -1,6 +1,7 @@
 #ifndef RAIJU_ARCHIVE_BUILDER_H
 #define RAIJU_ARCHIVE_BUILDER_H
 
+#include <stdbool.h>
 #include <stddef.h>
 
 typedef enum {
@@ -31,5 +32,13 @@ extern const char *const archive_format_names[FORMAT_COUNT];
  * success, 1 when the format is not writable on this host and -1 on error.
  */
 int archive_builder_write(const char *path, fixture_format format, const fixture_entry *entries, size_t count);
+
+/**
+ * Same as archive_builder_write, with 7z written uncompressed so its header
+ * stays plain instead of LZMA-encoded. A reader that walks the header with
+ * range requests, as the gateway probe does, can only read the plain form.
+ */
+int archive_builder_write_ex(const char *path, fixture_format format, const fixture_entry *entries, size_t count,
+                             bool plain_sevenz);
 
 #endif

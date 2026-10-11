@@ -20,6 +20,7 @@ typedef struct {
 	uint64_t total_bytes;
 	uint64_t free_bytes;
 	char firmware[32];
+	char ca_bundle[512];
 } raiju_fake_platform;
 
 /**

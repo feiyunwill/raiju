@@ -283,6 +283,7 @@ raiju_gateway *raiju_gateway_create(const raiju_gateway_config *config) {
 	gateway->config.install_root = gateway->install_root;
 	if (gateway->config.fetch == NULL) {
 		gateway->config.fetch = raiju_fetch_default();
+		gateway->config.fetch_context = (void *)config->platform;
 	}
 	char devices_path[RAIJU_PATH_MAX];
 	snprintf(devices_path, sizeof devices_path, "%s/session/devices.json", config->data_dir);

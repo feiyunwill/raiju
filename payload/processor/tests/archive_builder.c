@@ -10,12 +10,14 @@ const char *const archive_format_names[FORMAT_COUNT] = {"zip", "7z", "tar.zst", 
  * Configures an archive writer for a fixture format. Returns false when the
  * host libarchive cannot write it natively.
  */
-static bool configure_writer(struct archive *writer, fixture_format format) {
+static bool configure_writer(struct archive *writer, fixture_format format, bool plain_sevenz) {
 	switch (format) {
 	case FORMAT_ZIP:
 		return archive_write_set_format_zip(writer) == ARCHIVE_OK;
 	case FORMAT_7Z:
-		return archive_write_set_format_7zip(writer) == ARCHIVE_OK;
+		return archive_write_set_format_7zip(writer) == ARCHIVE_OK &&
+		       (!plain_sevenz ||
+		        archive_write_set_format_option(writer, "7zip", "compression", "copy") == ARCHIVE_OK);
 	case FORMAT_TAR_ZSTD:
 		return archive_write_set_format_pax_restricted(writer) == ARCHIVE_OK &&
 		       archive_write_add_filter_zstd(writer) == ARCHIVE_OK;
@@ -32,11 +34,16 @@ static bool configure_writer(struct archive *writer, fixture_format format) {
 }
 
 int archive_builder_write(const char *path, fixture_format format, const fixture_entry *entries, size_t count) {
+	return archive_builder_write_ex(path, format, entries, count, false);
+}
+
+int archive_builder_write_ex(const char *path, fixture_format format, const fixture_entry *entries, size_t count,
+                             bool plain_sevenz) {
 	struct archive *writer = archive_write_new();
 	if (writer == NULL) {
 		return -1;
 	}
-	if (!configure_writer(writer, format)) {
+	if (!configure_writer(writer, format, plain_sevenz)) {
 		archive_write_free(writer);
 		return 1;
 	}

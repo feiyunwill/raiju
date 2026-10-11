@@ -1,10 +1,12 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "api_internal.h"
@@ -376,6 +378,122 @@ static void every_new_endpoint_needs_a_token(void) {
 	raiju_test_rmtree(directory);
 }
 
+/**
+ * Reads the whole job list on its own thread while the main thread holds
+ * queue_lock, so a read handler that still took that lock would hang here.
+ */
+static void *jobs_read_thread(void *argument) {
+	struct {
+		raiju_gateway *gateway;
+		char cookie[160];
+		volatile int done;
+		int status;
+		char body[2048];
+	} *args = argument;
+	raiju_http_request request;
+	memset(&request, 0, sizeof request);
+	request.method = "GET";
+	request.path = "/api/jobs";
+	request.cookie = args->cookie;
+	raiju_http_response response;
+	raiju_response_init(&response);
+	args->status = raiju_gateway_handle(args->gateway, &request, &response);
+	snprintf(args->body, sizeof args->body, "%s", raiju_strbuf_cstr(&response.body));
+	raiju_response_free(&response);
+	__atomic_store_n(&args->done, 1, __ATOMIC_SEQ_CST);
+	return NULL;
+}
+
+static void jobs_reads_never_wait_for_the_queue(void) {
+	raiju_fixture_server *server = raiju_fixture_server_start();
+	CHECK(server != NULL);
+	raiju_fixture_server_set_jsonrpc(server, "{\"jsonrpc\":\"2.0\",\"id\":\"raiju\",\"result\":\"gid1\"}");
+	char aria2_url[128];
+	snprintf(aria2_url, sizeof aria2_url, "http://127.0.0.1:%u/jsonrpc", raiju_fixture_server_port(server));
+	raiju_fake_platform fake;
+	fake.free_bytes = 100ull * 1024 * 1024 * 1024;
+	char directory[1024];
+	raiju_gateway *gateway = make_gateway(&fake, aria2_url, directory, sizeof directory);
+	CHECK(gateway != NULL);
+	fake.free_bytes = 100ull * 1024 * 1024 * 1024;
+	char cookie[160];
+	pair_the_gateway(gateway, cookie, sizeof cookie);
+	raiju_http_request request;
+	raiju_http_response response;
+	const char *create = "{\"id\":\"gid1\",\"uri\":\"http://example/x.zip\",\"destination\":\"/data/homebrew\","
+	                     "\"kind\":\"zip\",\"size\":100000}";
+	memset(&request, 0, sizeof request);
+	request.method = "POST";
+	request.path = "/api/jobs";
+	request.cookie = cookie;
+	request.body = (const unsigned char *)create;
+	request.body_length = strlen(create);
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 201);
+	raiju_response_free(&response);
+
+	memset(&request, 0, sizeof request);
+	request.method = "GET";
+	request.path = "/api/jobs/gid1";
+	request.cookie = cookie;
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 200);
+	CHECK(strstr(raiju_strbuf_cstr(&response.body), "\"stage\":\"downloading\"") != NULL);
+	raiju_response_free(&response);
+
+	memset(&request, 0, sizeof request);
+	request.method = "POST";
+	request.path = "/api/jobs/gid1/cancel";
+	request.cookie = cookie;
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 200);
+	raiju_response_free(&response);
+
+	memset(&request, 0, sizeof request);
+	request.method = "GET";
+	request.path = "/api/jobs/gid1";
+	request.cookie = cookie;
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 200);
+	CHECK(strstr(raiju_strbuf_cstr(&response.body), "\"stage\":\"cancelled\"") != NULL);
+	CHECK(strstr(raiju_strbuf_cstr(&response.body), "\"status\":\"failed\"") != NULL);
+	raiju_response_free(&response);
+
+	raiju_api *api = gateway->api;
+	CHECK(api != NULL);
+	struct {
+		raiju_gateway *gateway;
+		char cookie[160];
+		volatile int done;
+		int status;
+		char body[2048];
+	} args;
+	memset(&args, 0, sizeof args);
+	args.gateway = gateway;
+	snprintf(args.cookie, sizeof args.cookie, "%s", cookie);
+	pthread_mutex_lock(&api->queue_lock);
+	pthread_t thread;
+	CHECK_INT(pthread_create(&thread, NULL, jobs_read_thread, &args), 0);
+	bool completed = false;
+	for (int i = 0; i < 2000 && !completed; i++) {
+		if (__atomic_load_n(&args.done, __ATOMIC_SEQ_CST)) {
+			completed = true;
+			break;
+		}
+		struct timespec pause = {0, 1000 * 1000};
+		nanosleep(&pause, NULL);
+	}
+	CHECK(completed);
+	pthread_mutex_unlock(&api->queue_lock);
+	pthread_join(thread, NULL);
+	CHECK_INT(args.status, 200);
+	CHECK(strstr(args.body, "\"gid1\"") != NULL);
+
+	raiju_gateway_destroy(gateway);
+	raiju_test_rmtree(directory);
+	raiju_fixture_server_stop(server);
+}
+
 void run_api_tests(void) {
 	RUN_TEST(status_is_public_and_reports_engine);
 	RUN_TEST(storage_reports_the_platform_figures);
@@ -383,4 +501,5 @@ void run_api_tests(void) {
 	RUN_TEST(the_stage_status_mapping_is_stable);
 	RUN_TEST(jobs_create_list_get_and_refuse);
 	RUN_TEST(every_new_endpoint_needs_a_token);
+	RUN_TEST(jobs_reads_never_wait_for_the_queue);
 }

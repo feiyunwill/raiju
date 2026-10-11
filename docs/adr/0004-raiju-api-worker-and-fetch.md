@@ -22,7 +22,7 @@ Issue #17 adds the `/api` surface (`status`, `storage`, `folders`, `jobs`, `prob
 
 ## Consequences
 
-- The queue is never raced: any future endpoint that reads or writes jobs must take the worker's mutex. That includes the read endpoints, so a request can wait for the stage the worker is running (an extraction, for instance); the cancel path stays responsive because it signals through its own mutex first. Publishing a job-list snapshot so reads never wait is follow-up work, not part of #17.
+- The queue is never raced: every endpoint that mutates jobs takes the worker's mutex. The read endpoints no longer do. The worker publishes a fixed-size snapshot of the queue under its own `view_lock` (lock order queue → view), refreshed when a stage or a progress figure changed and at most every 200 ms, forced immediately on every state change, so `GET /api/jobs` and `GET /api/jobs/:id` never wait for a stage the worker is running. The snapshot costs about 900 KB (`RAIJU_JOBS_MAX` records, allocated once). The cancel path stays responsive because it signals through its own mutex first.
 - A 400 ms polling tick adds a small, bounded load on aria2 while a download is active; it is silent otherwise (the loop returns immediately when no job is downloading).
 - The gateway now links the portable processor (and therefore libarchive); its Makefile detects libarchive the same way the processor's does, and the CI gateway job installs libarchive-dev/`brew install libarchive` alongside OpenSSL.
-- The TLS path compiles but is not exercised by tests (there is no internet in CI); it should be smoke-tested once against a real host, e.g. when the PS5 build lands.
+- The TLS path is exercised hermetically: a test generates a self-signed certificate in process, runs a local TLS server and fetches through it, proving the CA-bundle hook is honoured and verification is enforced. It should still be smoke-tested once against a real host when the PS5 build lands.

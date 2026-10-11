@@ -3,6 +3,7 @@
 
 #include "raiju/fetch.h"
 
+#include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
 #include <netdb.h>
@@ -17,6 +18,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "raiju/platform.h"
+
 #ifdef RAIJU_FETCH_TLS
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
@@ -24,6 +27,7 @@
 
 #define FETCH_HEADER_CAP (64u * 1024u)
 #define FETCH_READ_CHUNK 16384
+#define FETCH_CA_PATH_MAX 4096
 
 typedef struct {
 	char host[256];
@@ -94,18 +98,6 @@ typedef struct {
 	SSL *ssl;
 #endif
 } fetch_stream;
-
-#ifdef RAIJU_FETCH_TLS
-static SSL_CTX *tls_context;
-
-static void tls_context_init(void) {
-	tls_context = SSL_CTX_new(TLS_client_method());
-	if (tls_context != NULL) {
-		SSL_CTX_set_default_verify_paths(tls_context);
-		SSL_CTX_set_verify(tls_context, SSL_VERIFY_PEER, NULL);
-	}
-}
-#endif
 
 static int stream_write(fetch_stream *stream, const void *bytes, size_t length) {
 	const char *data = bytes;
@@ -185,7 +177,7 @@ static int connect_host(const fetch_url *url, int timeout_ms) {
 	return fd;
 }
 
-static int open_stream(const fetch_url *url, int timeout_ms, fetch_stream *stream) {
+static int open_stream(const fetch_url *url, const raiju_platform *platform, int timeout_ms, fetch_stream *stream) {
 	memset(stream, 0, sizeof *stream);
 	stream->fd = connect_host(url, timeout_ms);
 	if (stream->fd < 0) {
@@ -195,13 +187,26 @@ static int open_stream(const fetch_url *url, int timeout_ms, fetch_stream *strea
 		return 0;
 	}
 #ifdef RAIJU_FETCH_TLS
-	static pthread_once_t once = PTHREAD_ONCE_INIT;
-	pthread_once(&once, tls_context_init);
-	if (tls_context == NULL) {
+	SSL_CTX *context = SSL_CTX_new(TLS_client_method());
+	if (context == NULL) {
 		close(stream->fd);
 		return -1;
 	}
-	SSL *ssl = SSL_new(tls_context);
+	char bundle[FETCH_CA_PATH_MAX];
+	bundle[0] = '\0';
+	if (platform != NULL && platform->ca_bundle_path != NULL) {
+		platform->ca_bundle_path(platform->ctx, bundle, sizeof bundle);
+	}
+	int loaded = bundle[0] != '\0' ? SSL_CTX_load_verify_locations(context, bundle, NULL)
+	                              : SSL_CTX_set_default_verify_paths(context);
+	if (loaded != 1) {
+		SSL_CTX_free(context);
+		close(stream->fd);
+		return -1;
+	}
+	SSL_CTX_set_verify(context, SSL_VERIFY_PEER, NULL);
+	SSL *ssl = SSL_new(context);
+	SSL_CTX_free(context);
 	if (ssl == NULL) {
 		close(stream->fd);
 		return -1;
@@ -210,7 +215,12 @@ static int open_stream(const fetch_url *url, int timeout_ms, fetch_stream *strea
 	SSL_set_tlsext_host_name(ssl, url->host);
 	X509_VERIFY_PARAM *param = SSL_get0_param(ssl);
 	X509_VERIFY_PARAM_set_hostflags(param, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-	X509_VERIFY_PARAM_set1_host(param, url->host, 0);
+	struct in_addr address;
+	if (inet_pton(AF_INET, url->host, &address) == 1) {
+		X509_VERIFY_PARAM_set1_ip_asc(param, url->host);
+	} else {
+		X509_VERIFY_PARAM_set1_host(param, url->host, 0);
+	}
 	if (SSL_connect(ssl) != 1) {
 		SSL_free(ssl);
 		close(stream->fd);
@@ -296,7 +306,7 @@ static long elapsed_ms(const struct timespec *started) {
 
 static int fetch_run(void *context, raiju_fetch_method method, const char *url, const char *range, size_t max_bytes,
                      int timeout_ms, raiju_fetch_response *response) {
-	(void)context;
+	const raiju_platform *platform = context;
 	memset(response, 0, sizeof *response);
 	response->content_length = RAIJU_FETCH_NO_LENGTH;
 	fetch_url parsed;
@@ -304,7 +314,7 @@ static int fetch_run(void *context, raiju_fetch_method method, const char *url, 
 		return -1;
 	}
 	fetch_stream stream;
-	if (open_stream(&parsed, timeout_ms, &stream) != 0) {
+	if (open_stream(&parsed, platform, timeout_ms, &stream) != 0) {
 		return -1;
 	}
 	char host_header[320];

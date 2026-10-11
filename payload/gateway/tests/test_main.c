@@ -27,6 +27,10 @@ int main(void) {
 	run_api_tests();
 	printf("probe\n");
 	run_probe_tests();
+#ifdef RAIJU_FETCH_TLS
+	printf("tls\n");
+	run_tls_tests();
+#endif
 	printf("%d tests, %d checks, %d failures\n", raiju_test_count, raiju_test_checks, raiju_test_failures);
 	return raiju_test_failures == 0 ? 0 : 1;
 }

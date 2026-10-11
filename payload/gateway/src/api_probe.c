@@ -249,16 +249,14 @@ static bool sevenz_streams_size(const unsigned char *bytes, size_t length, size_
 	if (id != 0x07 || *position >= length) {
 		return false;
 	}
+	uint64_t folder_marker;
 	uint64_t folders;
-	uint64_t folder_prop;
-	if (!read_number(bytes, length, position, &folders) || *position >= length) {
-		return false;
-	}
-	(*position)++;
-	if (!read_number(bytes, length, position, &folder_prop) || folder_prop != 0x0B || folders == 0 ||
+	if (!read_number(bytes, length, position, &folder_marker) || folder_marker != 0x0B ||
+	    !read_number(bytes, length, position, &folders) || *position >= length || folders == 0 ||
 	    folders > PROBE_FOLDERS_MAX) {
 		return false;
 	}
+	(*position)++;
 	uint64_t *out_streams = calloc((size_t)folders, sizeof *out_streams);
 	if (out_streams == NULL) {
 		return false;
@@ -414,8 +412,10 @@ static int probe_free_space(const char *path, uint64_t *free_bytes, void *contex
 	return 0;
 }
 
-static int handle_probe(const raiju_http_request *request, raiju_http_response *response, void *context) {
-	raiju_api *api = context;
+/**
+ * Runs one probe and builds its response. The caller holds probe_lock.
+ */
+static int probe_run(const raiju_http_request *request, raiju_http_response *response, raiju_api *api) {
 	raiju_gateway *gateway = api->gateway;
 	char uri[2048];
 	if (!raiju_api_json_string((const char *)request->body, request->body_length, "uri", uri, sizeof uri)) {
@@ -496,6 +496,21 @@ static int handle_probe(const raiju_http_request *request, raiju_http_response *
 	raiju_response_json(response, 200, raiju_strbuf_cstr(&document));
 	raiju_strbuf_free(&document);
 	return 200;
+}
+
+/**
+ * Answers POST /api/probe, refusing with 503 probe_busy while another probe
+ * is in flight so a client cannot make the console scan the LAN in parallel.
+ */
+static int handle_probe(const raiju_http_request *request, raiju_http_response *response, void *context) {
+	raiju_api *api = context;
+	if (pthread_mutex_trylock(&api->probe_lock) != 0) {
+		raiju_response_error(response, 503, "probe_busy");
+		return 503;
+	}
+	int status = probe_run(request, response, api);
+	pthread_mutex_unlock(&api->probe_lock);
+	return status;
 }
 
 bool raiju_api_add_probe_route(raiju_gateway *gateway, raiju_api *api) {

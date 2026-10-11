@@ -50,6 +50,12 @@ static int fake_launch_engine(void *ctx, const char *executable, const char *opt
 	return 0;
 }
 
+static int fake_ca_bundle_path(void *ctx, char *buffer, size_t capacity) {
+	raiju_fake_platform *fake = ctx;
+	snprintf(buffer, capacity, "%s", fake->ca_bundle);
+	return 0;
+}
+
 static int fake_random_bytes(void *ctx, void *buffer, size_t length) {
 	raiju_fake_platform *fake = ctx;
 	unsigned char *out = buffer;
@@ -71,6 +77,7 @@ const raiju_platform *raiju_fake_platform_init(raiju_fake_platform *fake) {
 	fake->base.firmware = fake_firmware;
 	fake->base.launch_engine = fake_launch_engine;
 	fake->base.random_bytes = fake_random_bytes;
+	fake->base.ca_bundle_path = fake_ca_bundle_path;
 	fake->base.ctx = fake;
 	return &fake->base;
 }

@@ -32,9 +32,11 @@ typedef struct {
  * The outbound HTTP(S) client seam. It performs exactly one request without
  * following redirects, and returns 0 once a response was read (any HTTP
  * status) or -1 on a transport failure or when the body overran max_bytes.
- * The range string, when not NULL, is sent as the Range header. Tests
- * substitute a fake or a local fixture server; the gateway never reaches the
- * internet from a test.
+ * The range string, when not NULL, is sent as the Range header. The built-in
+ * client reads context as a const raiju_platform * whose ca_bundle_path hook
+ * names the PEM trust file (NULL, or an empty path, for the system store);
+ * other clients ignore it. Tests substitute a fake or a local fixture server;
+ * the gateway never reaches the internet from a test.
  */
 typedef int (*raiju_fetch_fn)(void *context, raiju_fetch_method method, const char *url, const char *range,
                               size_t max_bytes, int timeout_ms, raiju_fetch_response *response);

@@ -25,6 +25,7 @@ typedef struct {
 	int (*firmware)(void *ctx, char *buffer, size_t capacity);
 	int (*launch_engine)(void *ctx, const char *executable, const char *options_file);
 	int (*random_bytes)(void *ctx, void *buffer, size_t length);
+	int (*ca_bundle_path)(void *ctx, char *buffer, size_t capacity);
 	void *ctx;
 } raiju_platform;
 
@@ -32,8 +33,9 @@ typedef struct {
  * The host implementation used by tests and by a desktop build: it writes
  * notifications to stderr, treats escalation as a no-op, reads disk usage
  * through statvfs, finds the first non-loopback IPv4 address, reports the
- * firmware version as "unknown", launches the engine with fork/exec and
- * reads randomness from /dev/urandom.
+ * firmware version as "unknown", launches the engine with fork/exec, reads
+ * randomness from /dev/urandom and names no CA bundle (an empty string asks
+ * the TLS client for the system trust store).
  */
 const raiju_platform *raiju_platform_host(void);
 
