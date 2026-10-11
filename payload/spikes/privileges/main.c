@@ -8,7 +8,6 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
-#include <sys/sysctl.h>
 #include <unistd.h>
 
 #include <ps5/kernel.h>
@@ -17,6 +16,7 @@
 #define SCE_NOTIFICATION_LOCAL_USER_ID_SYSTEM 0xFE
 #define RAIJU_HOLD_SECONDS 15
 #define RAIJU_DATA_ROOT "/data/raiju"
+#define RAIJU_STAGING_FILE RAIJU_DATA_ROOT "/staging/privileges.probe"
 
 #ifndef RAIJU_VERSION
 #define RAIJU_VERSION "unknown"
@@ -50,11 +50,24 @@ static const char toast_tmpl[] =
 	"  \"localNotificationId\": \"1\""
 	"}";
 
-static const char *jail_sources[] = {
-	"SceSysCore",
-	"init",
-	"SceShellCore",
-	"SceShellUI",
+static const char *data_dirs[] = {
+	RAIJU_DATA_ROOT,
+	RAIJU_DATA_ROOT "/downloads",
+	RAIJU_DATA_ROOT "/staging",
+	RAIJU_DATA_ROOT "/trash",
+	RAIJU_DATA_ROOT "/session",
+	RAIJU_DATA_ROOT "/www",
+};
+
+/** The credentials a process holds, kept so that everything taken can be given back. */
+struct credentials {
+	uint64_t authid;
+	uint8_t caps[16];
+	uid_t uid;
+	uid_t ruid;
+	uid_t svuid;
+	gid_t rgid;
+	gid_t svgid;
 };
 
 /** Formats a byte count the way the UI does, e.g. `612.4 GB`. */
@@ -99,152 +112,205 @@ static void notify(const char *title, const char *detail) {
 	fflush(stdout);
 }
 
-/** Finds a process by name in the kernel process list, or -1. */
-static pid_t find_pid(const char *name) {
-	int mib[4] = {1, 14, 8, 0};
-	pid_t mypid = getpid();
-	pid_t pid = -1;
-	size_t buf_size;
-	uint8_t *buf;
-
-	if (sysctl(mib, 4, 0, &buf_size, 0, 0)) {
-		return -1;
+/** Creates one directory, saying whether it was made or was already there. */
+static int ensure_dir(const char *path) {
+	if (mkdir(path, 0755) == 0) {
+		printf("mkdir %s: created\n", path);
+		return 0;
 	}
-	if (!(buf = malloc(buf_size))) {
-		return -1;
+	if (errno == EEXIST) {
+		printf("mkdir %s: already there\n", path);
+		return 0;
 	}
-	if (sysctl(mib, 4, buf, &buf_size, 0, 0)) {
-		free(buf);
-		return -1;
-	}
-
-	for (uint8_t *ptr = buf; ptr < (buf + buf_size);) {
-		int struct_size = *(int *)ptr;
-		pid_t entry_pid = *(pid_t *)&ptr[72];
-		char *entry_name = (char *)&ptr[447];
-
-		if (struct_size <= 0) {
-			break;
-		}
-		ptr += struct_size;
-		if (!strcmp(name, entry_name) && entry_pid != mypid) {
-			pid = entry_pid;
-		}
-	}
-
-	free(buf);
-
-	return pid;
+	printf("mkdir %s: %s\n", path, strerror(errno));
+	return 1;
 }
 
-/** Borrows the jail directory of a system process, which sits outside the app sandbox. */
-static intptr_t borrowed_jaildir(pid_t *from_pid) {
-	size_t count = sizeof(jail_sources) / sizeof(*jail_sources);
+/** Reads the process's credentials into `creds`. */
+static void credentials_read(pid_t pid, struct credentials *creds) {
+	memset(creds, 0, sizeof(*creds));
+	creds->authid = kernel_get_ucred_authid(pid);
+	kernel_get_ucred_caps(pid, creds->caps);
+	creds->uid = kernel_get_ucred_uid(pid);
+	creds->ruid = kernel_get_ucred_ruid(pid);
+	creds->svuid = kernel_get_ucred_svuid(pid);
+	creds->rgid = kernel_get_ucred_rgid(pid);
+	creds->svgid = kernel_get_ucred_svgid(pid);
+}
+
+/** Writes `creds` back onto the process, so a measurement leaves nothing behind. */
+static void credentials_restore(pid_t pid, const struct credentials *creds) {
+	kernel_set_ucred_authid(pid, creds->authid);
+	kernel_set_ucred_caps(pid, creds->caps);
+	kernel_set_ucred_uid(pid, creds->uid);
+	kernel_set_ucred_ruid(pid, creds->ruid);
+	kernel_set_ucred_svuid(pid, creds->svuid);
+	kernel_set_ucred_rgid(pid, creds->rgid);
+	kernel_set_ucred_svgid(pid, creds->svgid);
+}
+
+/** Prints the credentials a run is judged on, and whether they match a set already read. */
+static void credentials_print(const char *label, pid_t pid,
+			      const struct credentials *expected) {
+	struct credentials now;
+
+	credentials_read(pid, &now);
+	printf("%s: uid %u, euid %u, ruid %u, svuid %u, rgid %u, svgid %u\n", label,
+	       (unsigned)getuid(), (unsigned)geteuid(), (unsigned)now.ruid,
+	       (unsigned)now.svuid, (unsigned)now.rgid, (unsigned)now.svgid);
+	printf("%s: authid 0x%llx, caps %02x%02x..%02x%02x\n", label,
+	       (unsigned long long)now.authid, now.caps[0], now.caps[1],
+	       now.caps[14], now.caps[15]);
+	if (expected != NULL) {
+		printf("%s: reverted %s\n", label,
+		       now.authid == expected->authid && now.uid == expected->uid &&
+				       now.ruid == expected->ruid &&
+				       now.svuid == expected->svuid &&
+				       now.rgid == expected->rgid &&
+				       now.svgid == expected->svgid &&
+				       memcmp(now.caps, expected->caps, sizeof(now.caps)) == 0
+			       ? "yes"
+			       : "no");
+	}
+}
+
+/** Creates every directory the supervisor owns, reporting the ones that fail. */
+static int probe_dirs(void) {
+	size_t count = sizeof(data_dirs) / sizeof(*data_dirs);
+	int failures = 0;
 
 	for (size_t i = 0; i < count; i++) {
-		pid_t pid = find_pid(jail_sources[i]);
-		intptr_t jail;
-
-		if (pid <= 0) {
-			continue;
-		}
-		jail = kernel_get_proc_jaildir(pid);
-		if (jail) {
-			*from_pid = pid;
-			return jail;
-		}
+		failures += ensure_dir(data_dirs[i]);
 	}
+
+	return failures;
+}
+
+/** Writes, flushes and renames a staging file, the way the pipeline commits a download. */
+static int probe_write(void) {
+	static const char body[] = "raiju privileges probe\n";
+	const char *final_path = RAIJU_STAGING_FILE ".done";
+	ssize_t written;
+	int fd;
+
+	fd = open(RAIJU_STAGING_FILE, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+	if (fd < 0) {
+		printf("write %s: %s\n", RAIJU_STAGING_FILE, strerror(errno));
+		return 1;
+	}
+	written = write(fd, body, sizeof(body) - 1);
+	if (written != (ssize_t)(sizeof(body) - 1)) {
+		printf("write %s: %s\n", RAIJU_STAGING_FILE, strerror(errno));
+		close(fd);
+		return 1;
+	}
+	if (fsync(fd) != 0) {
+		printf("fsync %s: %s\n", RAIJU_STAGING_FILE, strerror(errno));
+		close(fd);
+		return 1;
+	}
+	close(fd);
+	if (rename(RAIJU_STAGING_FILE, final_path) != 0) {
+		printf("rename %s: %s\n", final_path, strerror(errno));
+		return 1;
+	}
+	if (unlink(final_path) != 0) {
+		printf("unlink %s: %s\n", final_path, strerror(errno));
+		return 1;
+	}
+	printf("write %s: written, flushed, renamed, removed\n", RAIJU_STAGING_FILE);
 
 	return 0;
 }
 
-/** Creates one directory, saying whether it was made or was already there. */
-static void ensure_dir(const char *path) {
-	if (mkdir(path, 0755) == 0) {
-		printf("mkdir %s: created\n", path);
-		return;
+/** Reports free and total space on the filesystem holding the data root. */
+static int probe_space(void) {
+	char free_text[32];
+	char total_text[32];
+	uint64_t total = 0;
+	uint64_t free_bytes = space_of("/data", &total);
+
+	if (free_bytes == 0) {
+		printf("space /data: unreadable (%s)\n", strerror(errno));
+		return 1;
 	}
-	printf("mkdir %s: %s\n", path,
-	       errno == EEXIST ? "already there" : strerror(errno));
+	human_size(free_bytes, free_text, sizeof(free_text));
+	human_size(total, total_text, sizeof(total_text));
+	printf("space /data: %s free of %s\n", free_text, total_text);
+
+	return 0;
 }
 
-/** Takes privileged credentials and a jail outside the app sandbox, printing both sides. */
-static void escalate(void) {
-	pid_t pid = getpid();
-	pid_t source = -1;
-	uint8_t caps[16];
-	uint8_t attrs[32];
-	uint8_t qaflags[16];
-	intptr_t jail;
-	int result;
+/** Runs every operation Raiju needs and returns how many of them failed. */
+static int probe_all(void) {
+	int failures = 0;
 
-	memset(caps, 0xff, sizeof(caps));
-	kernel_get_ucred_attrs(pid, attrs);
-	kernel_get_qaflags(qaflags);
+	failures += probe_dirs();
+	failures += probe_write();
+	failures += probe_space();
 
-	printf("before: uid %d, euid %d, jaildir %p\n", getuid(), geteuid(),
-	       (void *)kernel_get_proc_jaildir(pid));
-	printf("before: authid 0x%llx\n",
-	       (unsigned long long)kernel_get_ucred_authid(pid));
-	printf("before: attrs %02x%02x..%02x, qaflags %02x%02x\n", attrs[0], attrs[1],
-	       attrs[31], qaflags[0], qaflags[15]);
-
-	result = kernel_set_ucred_authid(pid, 0x4800000000010003ull);
-	printf("authid: set %d\n", result);
-	result = kernel_set_ucred_caps(pid, caps);
-	printf("caps: set %d\n", result);
-	result = kernel_set_ucred_uid(pid, 0);
-	printf("uid: set %d\n", result);
-	result = kernel_set_ucred_ruid(pid, 0);
-	printf("ruid: set %d\n", result);
-	result = kernel_set_ucred_svuid(pid, 0);
-	printf("svuid: set %d\n", result);
-	result = kernel_set_ucred_rgid(pid, 0);
-	printf("rgid: set %d\n", result);
-	result = kernel_set_ucred_svgid(pid, 0);
-	printf("svgid: set %d\n", result);
-
-	jail = borrowed_jaildir(&source);
-	if (jail == 0) {
-		printf("jaildir: no system process to borrow from\n");
-		return;
-	}
-	result = kernel_set_proc_jaildir(pid, jail);
-	printf("jaildir: %p borrowed from pid %d, set %d\n", (void *)jail,
-	       (int)source, result);
-
-	printf("after: uid %d, euid %d, jaildir %p\n", getuid(), geteuid(),
-	       (void *)kernel_get_proc_jaildir(pid));
-	printf("after: authid 0x%llx\n",
-	       (unsigned long long)kernel_get_ucred_authid(pid));
+	return failures;
 }
 
 /**
- * Measures what a payload gets on a real console: the credentials and jail it starts with, what
- * escalation buys it, whether `/data/raiju` can be created, what `statvfs` says about `/data`, and
- * whether a second launch is turned away while the first holds the lock. Ends through
- * `payload_exit()`, because returning from `main` runs the hijacked process's teardown and dies in
- * the C++ runtime.
+ * Measures the smallest set of privileges Raiju actually needs. The loader's own context is tried
+ * first, and nothing is taken from the kernel unless that context fails: the process's credentials
+ * are read before any change, the narrowest candidate step is tried and re-probed, and everything
+ * is put back and verified afterwards. No jail is borrowed — a payload runs inside a hijacked
+ * system process, so kernel state owned by another process is not ours to install, and ending
+ * through `payload_exit()` is the only exit that does not run the hijacked process's C++ teardown.
  */
 int main(void) {
 	char free_text[32];
 	char total_text[32];
 	char title[64];
 	char detail[128];
+	struct credentials saved;
 	uint64_t total = 0;
 	uint64_t free_bytes;
+	pid_t pid = getpid();
+	int failures;
 	int lock;
 
 	printf("raiju privileges spike %s\n", RAIJU_VERSION);
 	printf("firmware %08x\n", kernel_get_fw_version());
 
-	ensure_dir(RAIJU_DATA_ROOT);
+	printf("loader context:\n");
+	failures = probe_all();
 
-	escalate();
+	if (failures == 0) {
+		printf("escalation: not needed, the loader's context does everything Raiju asks\n");
+	} else {
+		printf("escalation: %d failed, measuring the narrowest step\n", failures);
+		credentials_read(pid, &saved);
+		credentials_print("before", pid, NULL);
 
-	ensure_dir(RAIJU_DATA_ROOT "/downloads");
-	ensure_dir(RAIJU_DATA_ROOT "/staging");
-	ensure_dir(RAIJU_DATA_ROOT "/session");
+		if (kernel_set_ucred_uid(pid, 0) == 0) {
+			printf("uid: set to 0\n");
+			printf("uid 0 context:\n");
+			if (probe_all() == 0) {
+				printf("escalation: uid 0 alone is enough\n");
+			} else {
+				printf("escalation: uid 0 alone is not enough, taking credentials too\n");
+				kernel_set_ucred_ruid(pid, 0);
+				kernel_set_ucred_svuid(pid, 0);
+				kernel_set_ucred_rgid(pid, 0);
+				kernel_set_ucred_svgid(pid, 0);
+				kernel_set_ucred_authid(pid, 0x4800000000010003ull);
+				printf("escalated context:\n");
+				if (probe_all() == 0) {
+					printf("escalation: the full set is enough\n");
+				} else {
+					printf("escalation: still failing, the loader's context is the problem\n");
+				}
+			}
+		} else {
+			printf("uid: could not be set (%s)\n", strerror(errno));
+		}
+
+		credentials_restore(pid, &saved);
+		credentials_print("after", pid, &saved);
+	}
 
 	lock = open(RAIJU_DATA_ROOT "/session/raiju.lock", O_CREAT | O_RDWR, 0644);
 	if (lock < 0) {
@@ -259,12 +325,11 @@ int main(void) {
 		payload_exit(0);
 		return 0;
 	}
+	printf("lock: taken\n");
 
 	free_bytes = space_of("/data", &total);
 	human_size(free_bytes, free_text, sizeof(free_text));
 	human_size(total, total_text, sizeof(total_text));
-	printf("space: %s free of %s on /data\n", free_text, total_text);
-
 	snprintf(title, sizeof(title), "Raiju %s", RAIJU_VERSION);
 	snprintf(detail, sizeof(detail), "%s free of %s on /data", free_text,
 		 total_text);

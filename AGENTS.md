@@ -21,6 +21,8 @@ Raiju is a PS5 payload that downloads straight to the console's NVMe, verifies a
 
 Issues labelled `needs-ps5` require the human at a jailbroken, powered-on console. Build and verify everything you can off-console first, then stop and hand over: list the exact commands to run (`make -C payload send PS5_HOST=<ip>`), what to observe, and what to report back. Record measured results in the issue.
 
+A payload runs inside a hijacked system process, so a payload fault is a system fault. One session ended with the console off and needing a storage repair, and a restart costs the human their jailbreak (#46). So: prefer read-only measurements, keep writes inside `/data/raiju`, never install kernel state the payload did not create (another process's jail, a blanket capability grant), and keep nothing precious in `/data`, which a repair may not preserve. Record every crash, freeze or repair in the issue that caused it, attributed or not.
+
 ## Code
 
 - Names carry the meaning. The only comments allowed are doc blocks (JSDoc or equivalent) directly before a class or function. This applies to every file type, including config and workflows.
