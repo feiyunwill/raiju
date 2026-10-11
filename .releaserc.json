@@ -1,0 +1,26 @@
+{
+	"branches": [
+		"main",
+		{ "name": "next", "prerelease": "beta", "channel": "beta" }
+	],
+	"tagFormat": "v${version}",
+	"plugins": [
+		["@semantic-release/commit-analyzer", { "preset": "conventionalcommits" }],
+		[
+			"@semantic-release/release-notes-generator",
+			{ "preset": "conventionalcommits" }
+		],
+		[
+			"@semantic-release/github",
+			{
+				"assets": [
+					{ "path": "dist/raiju.elf", "label": "raiju.elf (PS5 payload)" },
+					{ "path": "dist/raiju-ui.zip", "label": "Web UI (standalone)" },
+					{ "path": "dist/companion/*", "label": "Desktop companion" }
+				],
+				"successComment": false,
+				"failComment": false
+			}
+		]
+	]
+}
