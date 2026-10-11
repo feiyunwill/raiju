@@ -264,6 +264,22 @@ static void the_stage_total_tracks_the_running_stage(void) {
 	}
 }
 
+static void the_display_name_is_separate_from_the_source_name(void) {
+	raiju_job job;
+	memset(&job, 0, sizeof job);
+	snprintf(job.id, sizeof job.id, "job-1");
+	snprintf(job.file_name, sizeof job.file_name, "PPSA25380-a-friends-rip.7z");
+	snprintf(job.display_name, sizeof job.display_name, "Elden Ring Nightreign");
+	raiju_strbuf document;
+	raiju_strbuf_init(&document);
+	raiju_api_job_json(&document, &job);
+	const char *text = raiju_strbuf_cstr(&document);
+	CHECK(strstr(text, "\"displayName\":\"Elden Ring Nightreign\"") != NULL);
+	CHECK(strstr(text, "\"name\":\"PPSA25380-a-friends-rip.7z\"") != NULL);
+	CHECK(strstr(text, "\"sourceName\":\"PPSA25380-a-friends-rip.7z\"") != NULL);
+	raiju_strbuf_free(&document);
+}
+
 static void jobs_create_list_get_and_refuse(void) {
 	raiju_fixture_server *server = raiju_fixture_server_start();
 	CHECK(server != NULL);
@@ -336,6 +352,7 @@ static void jobs_create_list_get_and_refuse(void) {
 	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 200);
 	CHECK(strstr(raiju_strbuf_cstr(&response.body), "\"gid1\"") != NULL);
 	CHECK(strstr(raiju_strbuf_cstr(&response.body), "\"uiStage\":\"download\"") != NULL);
+	CHECK(strstr(raiju_strbuf_cstr(&response.body), "\"displayName\":") != NULL);
 	raiju_response_free(&response);
 
 	memset(&request, 0, sizeof request);
@@ -344,6 +361,7 @@ static void jobs_create_list_get_and_refuse(void) {
 	request.cookie = cookie;
 	raiju_response_init(&response);
 	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 200);
+	CHECK(strstr(raiju_strbuf_cstr(&response.body), "\"displayName\":") != NULL);
 	raiju_response_free(&response);
 
 	memset(&request, 0, sizeof request);
@@ -527,6 +545,7 @@ void run_api_tests(void) {
 	RUN_TEST(folders_browse_only_inside_the_roots);
 	RUN_TEST(the_stage_status_mapping_is_stable);
 	RUN_TEST(the_stage_total_tracks_the_running_stage);
+	RUN_TEST(the_display_name_is_separate_from_the_source_name);
 	RUN_TEST(jobs_create_list_get_and_refuse);
 	RUN_TEST(every_new_endpoint_needs_a_token);
 	RUN_TEST(jobs_reads_never_wait_for_the_queue);

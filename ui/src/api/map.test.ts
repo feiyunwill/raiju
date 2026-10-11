@@ -19,6 +19,7 @@ function jobFrom(overrides: Partial<ApiJob> = {}): ApiJob {
 		titleId: "PPSA25380",
 		sourceName: "PPSA25380-elden-ring-nightreign.7z",
 		name: "PPSA25380-elden-ring-nightreign.7z",
+		displayName: "",
 		kind: "7z",
 		installName: "PPSA25380.exfat",
 		bytesTotal: 68_400_000_000,
@@ -94,6 +95,15 @@ describe("uiKindOf", () => {
 });
 
 describe("apiJobToJob", () => {
+	test("prefers the console's name over the one inferred from the file", () => {
+		expect(apiJobToJob(jobFrom()).name).toBe("Elden Ring Nightreign");
+		const named = apiJobToJob(
+			jobFrom({ displayName: "Elden Ring Nightreign" }),
+		);
+		expect(named.name).toBe("Elden Ring Nightreign");
+		expect(named.sourceName).toBe("PPSA25380-elden-ring-nightreign.7z");
+	});
+
 	test("carries the stage and the download's byte figures", () => {
 		const job = apiJobToJob(jobFrom());
 		expect(job.stage).toBe("download");

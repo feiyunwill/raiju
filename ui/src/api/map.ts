@@ -123,7 +123,9 @@ export type LiveFigures = {
 /**
  * Maps one API job to a dashboard job. `bytesTotal` is the download's expected size, `bytesStageTotal`
  * the total of the stage running now and `bytesDone` that stage's progress, so a stage whose total the
- * API does not know reads as indeterminate rather than as a made-up percentage. A job that waits in the install stage is
+ * API does not know reads as indeterminate rather than as a made-up percentage. `displayName` is the
+ * game's own name when the console read one from param.json, which beats the name inferred from the
+ * file, while `sourceName` keeps the file the user downloaded. A job that waits in the install stage is
  * waiting on a name conflict; one that waits in the verify stage is waiting for a title ID.
  */
 export function apiJobToJob(job: ApiJob, live: LiveFigures = {}): Job {
@@ -136,7 +138,7 @@ export function apiJobToJob(job: ApiJob, live: LiveFigures = {}): Job {
 	return {
 		id: job.id,
 		titleId,
-		name: description.name,
+		name: job.displayName || description.name,
 		sourceName: job.sourceName,
 		kind,
 		format,

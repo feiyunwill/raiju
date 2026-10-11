@@ -66,6 +66,13 @@ raiju_image_fs_status raiju_image_read_param_json(const raiju_image_io *io, raij
  * reach the file inside the image gives RAIJU_PARAM_IO_ERROR; fs_status, when
  * not NULL, receives the reader's detailed status.
  */
+/**
+ * Reads param.json inside an image and extracts the game's display name, using
+ * the same reader as the title ID. Writes an empty string and returns false when
+ * the image is unreadable, has no param.json or carries no localized title.
+ */
+bool raiju_display_name_from_image(const char *path, char *out, size_t out_size);
+
 raiju_param_status raiju_title_id_from_image(const char *path, char out[RAIJU_TITLE_ID_LEN + 1],
                                              raiju_image_fs_status *fs_status);
 

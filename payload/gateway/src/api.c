@@ -270,6 +270,7 @@ static void fill_view(raiju_api_job_view *view, const raiju_job *job) {
 	snprintf(view->status, sizeof view->status, "%s", ui_status_name(job->stage));
 	snprintf(view->title_id, sizeof view->title_id, "%s", job->title_id);
 	snprintf(view->source_name, sizeof view->source_name, "%s", job->file_name);
+	snprintf(view->display_name, sizeof view->display_name, "%s", job->display_name);
 	snprintf(view->install_name, sizeof view->install_name, "%s", install_name_of(job));
 	snprintf(view->kind, sizeof view->kind, "%s", raiju_kind_name(job->kind));
 	snprintf(view->error, sizeof view->error, "%s", job->error);
@@ -296,6 +297,8 @@ static void raiju_api_job_view_json(raiju_strbuf *out, const raiju_api_job_view 
 	raiju_strbuf_append_json_string(out, view->source_name);
 	raiju_strbuf_append(out, ",\"name\":");
 	raiju_strbuf_append_json_string(out, view->source_name);
+	raiju_strbuf_append(out, ",\"displayName\":");
+	raiju_strbuf_append_json_string(out, view->display_name);
 	raiju_strbuf_append(out, ",\"kind\":");
 	raiju_strbuf_append_json_string(out, view->kind);
 	raiju_strbuf_append(out, ",\"installName\":");

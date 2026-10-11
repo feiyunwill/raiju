@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #define RAIJU_TITLE_ID_LEN 9
+#define RAIJU_PARAM_NAME_MAX 256
 #define RAIJU_PARAM_JSON_MAX_BYTES (1024u * 1024u)
 
 typedef enum {
@@ -49,6 +50,16 @@ bool raiju_title_id_valid(const char *text);
  * NUL-terminated ID to out on success.
  */
 raiju_param_status raiju_title_id_from_param_json(const char *json, size_t json_len, char out[RAIJU_TITLE_ID_LEN + 1]);
+
+/**
+ * Extracts the game's display name from param.json bytes: the titleName of the
+ * language the document names as localizedParameters.defaultLanguage, or of the
+ * first language it lists when it names none. Writes a NUL-terminated name to out
+ * and returns true when the document yielded one; false, with out empty, when it
+ * is malformed, too large, or carries no localized title at all. A name longer
+ * than out_size - 1 bytes is truncated.
+ */
+bool raiju_display_name_from_param_json(const char *json, size_t json_len, char *out, size_t out_size);
 
 /**
  * Reads <dump_dir>/sce_sys/param.json from disk and extracts its title ID.

@@ -247,10 +247,15 @@ static bool accept_layout(raiju_job *job, const raiju_extract_result *result) {
 	}
 	if (result->layout == RAIJU_LAYOUT_FOLDER_DUMP) {
 		job->payload_type = RAIJU_PAYLOAD_FOLDER;
+		if (result->param_json != NULL) {
+			raiju_display_name_from_param_json(result->param_json, result->param_json_len, job->display_name,
+			                                   sizeof job->display_name);
+		}
 		resolve_title(job, result->param_status == RAIJU_PARAM_OK ? result->title_id : NULL, NULL);
 	} else {
 		char title_id[RAIJU_TITLE_ID_LEN + 1];
 		job->payload_type = RAIJU_PAYLOAD_IMAGE;
+		raiju_display_name_from_image(job->payload_path, job->display_name, sizeof job->display_name);
 		resolve_title(job, image_title_id(job->payload_path, title_id), base_name(job->payload_path));
 	}
 	return true;
@@ -318,6 +323,7 @@ static bool step_classifying(raiju_job *job) {
 		char title_id[RAIJU_TITLE_ID_LEN + 1];
 		job->payload_type = RAIJU_PAYLOAD_IMAGE;
 		memcpy(job->payload_path, job->source_path, sizeof job->payload_path);
+		raiju_display_name_from_image(job->source_path, job->display_name, sizeof job->display_name);
 		resolve_title(job, image_title_id(job->source_path, title_id), NULL);
 		return true;
 	}

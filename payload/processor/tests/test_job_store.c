@@ -70,6 +70,7 @@ static raiju_store_status parse_document(const char *document) {
 static void jobs_round_trip_through_json(void) {
 	raiju_job_list list = {NULL, 0, 0};
 	raiju_job first = sample_job("job-1");
+	snprintf(first.display_name, sizeof first.display_name, "Elden Ring Nightreign");
 	raiju_job second = sample_job("job_2");
 	second.stage = RAIJU_STAGE_DOWNLOADING;
 	second.failed_stage = RAIJU_STAGE_DOWNLOADING;

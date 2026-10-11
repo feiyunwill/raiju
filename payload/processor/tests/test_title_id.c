@@ -302,6 +302,38 @@ static void param_status_names_are_stable(void) {
 	CHECK_STR(raiju_param_status_name(RAIJU_PARAM_IO_ERROR), "io_error");
 }
 
+static void display_name_comes_from_the_localized_parameters(void) {
+	static const char document[] =
+		"{\"titleId\":\"PPSA24003\",\"localizedParameters\":{\"defaultLanguage\":\"en-US\","
+		"\"ja-JP\":{\"titleName\":\"Japanese Name\"},\"en-US\":{\"titleName\":\"Elden Ring Nightreign\"}},"
+		"\"version\":\"01.00\"}";
+	char name[RAIJU_PARAM_NAME_MAX];
+	CHECK(raiju_display_name_from_param_json(document, sizeof document - 1, name, sizeof name));
+	CHECK_STR(name, "Elden Ring Nightreign");
+
+	static const char late_default[] =
+		"{\"localizedParameters\":{\"ja-JP\":{\"titleName\":\"Japanese Name\"},"
+		"\"defaultLanguage\":\"ja-JP\"}}";
+	CHECK(raiju_display_name_from_param_json(late_default, sizeof late_default - 1, name, sizeof name));
+	CHECK_STR(name, "Japanese Name");
+
+	static const char no_localized[] = "{\"titleId\":\"PPSA24003\"}";
+	CHECK(!raiju_display_name_from_param_json(no_localized, sizeof no_localized - 1, name, sizeof name));
+	CHECK_STR(name, "");
+
+	static const char no_title_name[] = "{\"localizedParameters\":{\"en-US\":{\"titleId\":\"PPSA24003\"}}}";
+	CHECK(!raiju_display_name_from_param_json(no_title_name, sizeof no_title_name - 1, name, sizeof name));
+
+	static const char truncated_json[] = "{\"localizedParameters\":";
+	CHECK(!raiju_display_name_from_param_json(truncated_json, sizeof truncated_json - 1, name, sizeof name));
+
+	static const char trailing_junk[] = "{\"localizedParameters\":{\"en-US\":{\"titleName\":\"Game\"}}} x";
+	CHECK(!raiju_display_name_from_param_json(trailing_junk, sizeof trailing_junk - 1, name, sizeof name));
+
+	CHECK(raiju_display_name_from_param_json(realistic_param_json, sizeof realistic_param_json - 1, name, sizeof name));
+	CHECK_STR(name, "Some \"Game\" \xc3\xa9\xf0\x9f\x8e\xae");
+}
+
 void run_title_id_tests(void) {
 	RUN_TEST(title_id_is_read_from_realistic_param_json);
 	RUN_TEST(minimal_and_spaced_documents_parse);
@@ -322,4 +354,5 @@ void run_title_id_tests(void) {
 	RUN_TEST(file_name_is_the_fallback);
 	RUN_TEST(no_source_asks_the_user);
 	RUN_TEST(param_status_names_are_stable);
+	RUN_TEST(display_name_comes_from_the_localized_parameters);
 }

@@ -59,6 +59,7 @@ static const field_spec job_fields[] = {
     VALUE_FIELD("payloadType", FIELD_PAYLOAD, payload_type),
     STRING_FIELD("payloadPath", FIELD_PATH, payload_path, false),
     STRING_FIELD("titleId", FIELD_TITLE_ID, title_id, false),
+    STRING_FIELD("displayName", FIELD_STRING, display_name, false),
     VALUE_FIELD("titleSource", FIELD_TITLE_SOURCE, title_source),
     VALUE_FIELD("namesDisagree", FIELD_BOOL, names_disagree),
     STRING_FIELD("installPath", FIELD_PATH, install_path, false),

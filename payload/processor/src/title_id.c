@@ -7,7 +7,10 @@
 
 #define JSON_MAX_DEPTH 64
 #define TITLE_ID_KEY "titleId"
-#define CAPTURE_CAPACITY 16
+#define TITLE_NAME_KEY "titleName"
+#define LOCALIZED_KEY "localizedParameters"
+#define DEFAULT_LANGUAGE_KEY "defaultLanguage"
+#define CAPTURE_CAPACITY 256
 #define PARAM_JSON_RELATIVE "sce_sys/param.json"
 
 typedef struct {
@@ -27,6 +30,23 @@ typedef struct {
 	bool is_string;
 	string_sink value;
 } title_capture;
+
+/**
+ * What a display-name pass kept from localizedParameters: the default language's
+ * titleName, and the first one seen as a fallback for a document that names its
+ * default only after listing a language. duplicate marks a repeated key, as the
+ * title-ID pass does.
+ */
+typedef struct {
+	string_sink default_language;
+	string_sink chosen;
+	string_sink first;
+	bool have_default;
+	bool have_chosen;
+	bool have_first;
+	bool seen_localized;
+	bool duplicate;
+} name_capture;
 
 /**
  * Returns whether c is an ASCII decimal digit, independent of locale.
@@ -354,6 +374,201 @@ static bool parse_value(json_cursor *cur, int depth) {
 		}
 		return false;
 	}
+}
+
+
+/** Returns whether a parsed key equals a keyword. */
+static bool key_matches(const string_sink *key, const char *text) {
+	return !key->overflow && key->length == strlen(text) && memcmp(key->data, text, key->length) == 0;
+}
+
+/**
+ * Parses one language object inside localizedParameters, keeping its
+ * titleName and validating the rest of the object as JSON.
+ */
+static bool parse_language_object(json_cursor *cur, int depth, string_sink *name, bool *found) {
+	if (depth > JSON_MAX_DEPTH || !consume(cur, '{')) {
+		return false;
+	}
+	skip_whitespace(cur);
+	if (consume(cur, '}')) {
+		return true;
+	}
+	for (;;) {
+		skip_whitespace(cur);
+		string_sink key = {{0}, 0, false};
+		if (!parse_string(cur, &key)) {
+			return false;
+		}
+		skip_whitespace(cur);
+		if (!consume(cur, ':')) {
+			return false;
+		}
+		skip_whitespace(cur);
+		if (key_matches(&key, TITLE_NAME_KEY) && cur->pos < cur->end && *cur->pos == '"') {
+			string_sink value = {{0}, 0, false};
+			if (!parse_string(cur, &value)) {
+				return false;
+			}
+			if (!*found) {
+				*name = value;
+				*found = true;
+			}
+		} else if (!parse_value(cur, depth)) {
+			return false;
+		}
+		skip_whitespace(cur);
+		if (consume(cur, '}')) {
+			return true;
+		}
+		if (!consume(cur, ',')) {
+			return false;
+		}
+	}
+}
+
+/**
+ * Parses localizedParameters: keeps the default language's titleName, and the
+ * first one seen for a document that lists languages before naming its default.
+ */
+static bool parse_localized_object(json_cursor *cur, int depth, name_capture *capture) {
+	if (depth > JSON_MAX_DEPTH || !consume(cur, '{')) {
+		return false;
+	}
+	skip_whitespace(cur);
+	if (consume(cur, '}')) {
+		return true;
+	}
+	for (;;) {
+		skip_whitespace(cur);
+		string_sink key = {{0}, 0, false};
+		if (!parse_string(cur, &key)) {
+			return false;
+		}
+		skip_whitespace(cur);
+		if (!consume(cur, ':')) {
+			return false;
+		}
+		skip_whitespace(cur);
+		if (key_matches(&key, DEFAULT_LANGUAGE_KEY) && cur->pos < cur->end && *cur->pos == '"') {
+			string_sink value = {{0}, 0, false};
+			if (!parse_string(cur, &value)) {
+				return false;
+			}
+			if (!capture->have_default) {
+				capture->default_language = value;
+				capture->have_default = true;
+			}
+		} else if (cur->pos < cur->end && *cur->pos == '{') {
+			string_sink name = {{0}, 0, false};
+			bool found = false;
+			if (!parse_language_object(cur, depth + 1, &name, &found)) {
+				return false;
+			}
+			if (found) {
+				if (!capture->have_first) {
+					capture->first = name;
+					capture->have_first = true;
+				}
+				if (!capture->have_chosen && capture->have_default && capture->default_language.length == key.length &&
+				    memcmp(capture->default_language.data, key.data, key.length) == 0) {
+					capture->chosen = name;
+					capture->have_chosen = true;
+				}
+			}
+		} else if (!parse_value(cur, depth)) {
+			return false;
+		}
+		skip_whitespace(cur);
+		if (consume(cur, '}')) {
+			return true;
+		}
+		if (!consume(cur, ',')) {
+			return false;
+		}
+	}
+}
+
+/**
+ * Parses a top-level object looking only for localizedParameters.
+ */
+static bool parse_object_for_name(json_cursor *cur, int depth, name_capture *capture) {
+	if (depth > JSON_MAX_DEPTH || !consume(cur, '{')) {
+		return false;
+	}
+	skip_whitespace(cur);
+	if (consume(cur, '}')) {
+		return true;
+	}
+	for (;;) {
+		skip_whitespace(cur);
+		string_sink key = {{0}, 0, false};
+		if (!parse_string(cur, &key)) {
+			return false;
+		}
+		skip_whitespace(cur);
+		if (!consume(cur, ':')) {
+			return false;
+		}
+		skip_whitespace(cur);
+		if (key_matches(&key, LOCALIZED_KEY)) {
+			if (capture->seen_localized) {
+				capture->duplicate = true;
+			}
+			capture->seen_localized = true;
+			if (cur->pos < cur->end && *cur->pos == '{') {
+				if (!parse_localized_object(cur, depth + 1, capture)) {
+					return false;
+				}
+			} else if (!parse_value(cur, depth)) {
+				return false;
+			}
+		} else if (!parse_value(cur, depth)) {
+			return false;
+		}
+		skip_whitespace(cur);
+		if (consume(cur, '}')) {
+			return true;
+		}
+		if (!consume(cur, ',')) {
+			return false;
+		}
+	}
+}
+
+bool raiju_display_name_from_param_json(const char *json, size_t json_len, char *out, size_t out_size) {
+	if (json == NULL || out == NULL || out_size == 0) {
+		return false;
+	}
+	out[0] = '\0';
+	if (json_len > RAIJU_PARAM_JSON_MAX_BYTES) {
+		return false;
+	}
+	json_cursor cur = {(const unsigned char *)json, (const unsigned char *)json + json_len};
+	static const unsigned char bom[] = {0xEF, 0xBB, 0xBF};
+	if (json_len >= sizeof bom && memcmp(cur.pos, bom, sizeof bom) == 0) {
+		cur.pos += sizeof bom;
+	}
+	name_capture capture;
+	memset(&capture, 0, sizeof capture);
+	skip_whitespace(&cur);
+	if (!parse_object_for_name(&cur, 1, &capture)) {
+		return false;
+	}
+	skip_whitespace(&cur);
+	if (cur.pos != cur.end || capture.duplicate) {
+		return false;
+	}
+	const string_sink *picked = capture.have_chosen ? &capture.chosen
+	                          : capture.have_first   ? &capture.first
+	                                                 : NULL;
+	if (picked == NULL || picked->overflow || picked->length == 0) {
+		return false;
+	}
+	size_t length = picked->length < out_size - 1 ? picked->length : out_size - 1;
+	memcpy(out, picked->data, length);
+	out[length] = '\0';
+	return true;
 }
 
 bool raiju_title_id_valid(const char *text) {

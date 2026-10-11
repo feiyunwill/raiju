@@ -120,6 +120,31 @@ raiju_param_status raiju_title_id_from_image(const char *path, char out[RAIJU_TI
 	return result;
 }
 
+bool raiju_display_name_from_image(const char *path, char *out, size_t out_size) {
+	if (path == NULL || out == NULL || out_size == 0) {
+		return false;
+	}
+	out[0] = '\0';
+	int fd = open(path, O_RDONLY);
+	if (fd < 0) {
+		return false;
+	}
+	bool found = false;
+	raiju_image_io io;
+	if (raiju_image_io_from_fd(&io, fd) == 0) {
+		raiju_kind kind = RAIJU_KIND_UNKNOWN;
+		uint8_t *json = NULL;
+		size_t json_len = 0;
+		if (detect_image_kind(&io, &kind) == RAIJU_IMAGE_FS_OK &&
+		    raiju_image_read_param_json(&io, kind, &json, &json_len) == RAIJU_IMAGE_FS_OK) {
+			found = raiju_display_name_from_param_json((const char *)json, json_len, out, out_size);
+		}
+		free(json);
+	}
+	close(fd);
+	return found;
+}
+
 raiju_title_resolution raiju_resolve_image_title_id(const char *path) {
 	char title_id[RAIJU_TITLE_ID_LEN + 1];
 	bool from_param = raiju_title_id_from_image(path, title_id, NULL) == RAIJU_PARAM_OK;

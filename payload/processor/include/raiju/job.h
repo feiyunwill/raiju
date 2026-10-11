@@ -71,6 +71,7 @@ typedef struct {
 	raiju_payload_type payload_type;
 	char payload_path[RAIJU_JOB_PATH_MAX];
 	char title_id[RAIJU_TITLE_ID_LEN + 1];
+	char display_name[RAIJU_JOB_NAME_MAX];
 	raiju_title_source title_source;
 	bool names_disagree;
 	char install_path[RAIJU_JOB_PATH_MAX];

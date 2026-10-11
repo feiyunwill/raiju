@@ -31,6 +31,7 @@ typedef struct {
 	char status[RAIJU_STAGE_TOKEN_MAX];
 	char title_id[RAIJU_TITLE_ID_LEN + 1];
 	char source_name[RAIJU_JOB_NAME_MAX];
+	char display_name[RAIJU_JOB_NAME_MAX];
 	char install_name[RAIJU_JOB_PATH_MAX];
 	char kind[RAIJU_STAGE_TOKEN_MAX];
 	char error[RAIJU_JOB_ERROR_MAX];

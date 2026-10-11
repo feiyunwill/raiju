@@ -501,6 +501,7 @@ static void title_ids_come_from_param_json_first(void) {
 	CHECK(job != NULL && job->stage == RAIJU_STAGE_READY);
 	if (job != NULL) {
 		CHECK_STR(job->title_id, "PPSA24003");
+		CHECK_STR(job->display_name, "Raiju");
 		CHECK_INT(job->title_source, RAIJU_TITLE_SOURCE_PARAM_JSON);
 		CHECK(job->names_disagree);
 		CHECK_STR(raiju_kind_name(job->kind), "zip");
