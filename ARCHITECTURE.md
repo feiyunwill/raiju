@@ -36,7 +36,7 @@ Data path for a download: **Internet → PS5 NIC → aria2 → NVMe → (extract
 Single ELF, sent through the existing ELF loader (port 9021).
 
 **Supervisor**
-- Runs with the privileges the loader grants, and owns no kernel state it did not create (ADR 0006). Measured on firmware 13600007 (#2): the loader starts a payload with `euid 0` and no jail (`jaildir 0`), and `mkdir /data/raiju` succeeds before any escalation runs — so escalation is a last resort, not a ritual. No borrowing another process's jail, no blanket capability grant; if an operation is proven to need more privilege, the narrowest step that works is recorded with its measurement and reverted on every exit path.
+- Runs with the privileges the loader grants, and owns no kernel state it did not create (ADR 0006). Measured on firmware 13600007 (#2, #46): the loader starts a payload with `euid 0` and no jail (`jaildir 0`), and that context alone creates the data root, writes and renames a staging file, takes the lock and reads `/data` space — so Raiju takes no credentials and borrows no jail. Escalation stays out until an operation is proven to need it, and then only in the narrowest step that works, recorded with its measurement and reverted on every exit path.
 - Creates `/data/raiju/{downloads,staging,trash,session,www}` on first run.
 - Starts the engine and gateway, and shows a PS5 notification: `Raiju ready — http://<ip>:8080 · code 4821`.
 - Single-instance guard: if Raiju is already running, the new copy exits and re-shows the notification. An `flock` on `/data/raiju/session/raiju.lock` answers that, and the second launch is refused with `EWOULDBLOCK` (#2).
