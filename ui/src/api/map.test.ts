@@ -213,4 +213,8 @@ describe("error sentences", () => {
 			"Raiju couldn't pair",
 		);
 	});
+
+	test("explains a probe that was refused while another was running", () => {
+		expect(jobErrorText("probe_busy")).toStartWith("Raiju is already checking");
+	});
 });

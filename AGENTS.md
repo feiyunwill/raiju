@@ -29,4 +29,4 @@ Issues labelled `needs-ps5` require the human at a jailbroken, powered-on consol
 
 ## Commits
 
-Conventional Commits, enforced by hooks and CI; scopes are listed in `commitlint.config.mjs`. Commit messages are plain: subject, optional body, no trailers (no `Co-Authored-By`).
+Conventional Commits, enforced by hooks and CI; scopes are listed in `commitlint.config.mjs`. Commit messages are plain: subject, optional body, no trailers (no `Co-Authored-By`). Keep body lines under 100 characters: commitlint's `body-max-line-length` also lints the squash message `next` receives, so a body pasted as one long line fails CI after the merge.
