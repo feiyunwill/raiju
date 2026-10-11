@@ -23,6 +23,9 @@ CPPFLAGS += $(shell $(LZMA_PKG_CONFIG) --cflags liblzma) -DRAIJU_HAVE_LZMA
 LDLIBS += $(LZMA_LIBS)
 endif
 
+TEST_FIXTURE_DIR := $(abspath tests/fixtures)
+CPPFLAGS += -DRAIJU_TEST_FIXTURE_DIR=\"$(TEST_FIXTURE_DIR)\"
+
 CIVETWEB_VERSION := 1.16
 CIVETWEB_DIR := ../third_party/civetweb
 CIVETWEB_URL := https://github.com/civetweb/civetweb/archive/refs/tags/v$(CIVETWEB_VERSION).tar.gz

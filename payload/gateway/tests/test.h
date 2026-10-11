@@ -104,8 +104,9 @@ void run_api_tests(void);
 void run_probe_tests(void);
 
 /**
- * Runs the real-HTTPS tests against a local TLS server. Compiled to a no-op
- * when the build has no OpenSSL (RAIJU_FETCH_TLS undefined).
+ * Runs the real-HTTPS tests against a local TLS server. Fails the run when the
+ * build has no OpenSSL (RAIJU_FETCH_TLS undefined), so the contract cannot go
+ * untested unnoticed.
  */
 void run_tls_tests(void);
 

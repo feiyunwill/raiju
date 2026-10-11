@@ -15,68 +15,15 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <openssl/evp.h>
-#include <openssl/pem.h>
 #include <openssl/ssl.h>
-#include <openssl/x509.h>
-#include <openssl/x509v3.h>
 
 #include "fake_platform.h"
 #include "raiju/fetch.h"
 #include "raiju/platform.h"
 
-/**
- * Generates a self-signed RSA certificate with subjectAltName IP:<ip>,
- * basicConstraints CA:TRUE and a long validity, writing cert and key as PEM.
- */
-static bool write_self_signed(const char *cert_path, const char *key_path, const char *ip) {
-	EVP_PKEY *key = EVP_PKEY_Q_keygen(NULL, NULL, "RSA", (size_t)2048);
-	if (key == NULL) {
-		return false;
-	}
-	X509 *cert = X509_new();
-	if (cert == NULL) {
-		EVP_PKEY_free(key);
-		return false;
-	}
-	X509_set_version(cert, 2);
-	ASN1_INTEGER_set(X509_get_serialNumber(cert), 1);
-	X509_gmtime_adj(X509_getm_notBefore(cert), 0);
-	X509_gmtime_adj(X509_getm_notAfter(cert), 60L * 60L * 24L * 3650L);
-	X509_set_pubkey(cert, key);
-	X509_NAME *name = (X509_NAME *)X509_get_subject_name(cert);
-	X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (const unsigned char *)"raiju-tls-test", -1, -1, 0);
-	X509_set_issuer_name(cert, name);
-	X509V3_CTX context;
-	X509V3_set_ctx_nodb(&context);
-	X509V3_set_ctx(&context, cert, cert, NULL, NULL, 0);
-	X509_EXTENSION *extension = X509V3_EXT_conf_nid(NULL, &context, NID_basic_constraints, "critical,CA:TRUE");
-	if (extension != NULL) {
-		X509_add_ext(cert, extension, -1);
-		X509_EXTENSION_free(extension);
-	}
-	char san[64];
-	snprintf(san, sizeof san, "IP:%s", ip);
-	extension = X509V3_EXT_conf_nid(NULL, &context, NID_subject_alt_name, san);
-	if (extension != NULL) {
-		X509_add_ext(cert, extension, -1);
-		X509_EXTENSION_free(extension);
-	}
-	bool ok = X509_sign(cert, key, EVP_sha256()) != 0;
-	FILE *cert_file = ok ? fopen(cert_path, "wb") : NULL;
-	ok = cert_file != NULL && PEM_write_X509(cert_file, cert) == 1;
-	if (cert_file != NULL) {
-		fclose(cert_file);
-	}
-	FILE *key_file = ok ? fopen(key_path, "wb") : NULL;
-	ok = key_file != NULL && PEM_write_PrivateKey(key_file, key, NULL, NULL, 0, NULL, NULL) == 1;
-	if (key_file != NULL) {
-		fclose(key_file);
-	}
-	X509_free(cert);
-	EVP_PKEY_free(key);
-	return ok;
-}
+#define TLS_BODY "raiju tls body"
+#define TLS_MAX_BYTES 4096
+#define TLS_TIMEOUT_MS 5000
 
 typedef struct {
 	int listen_fd;
@@ -84,8 +31,6 @@ typedef struct {
 	pthread_t thread;
 	volatile int running;
 	SSL_CTX *ctx;
-	char body[64];
-	size_t body_length;
 } tls_server;
 
 static void *tls_server_thread(void *argument) {
@@ -105,9 +50,9 @@ static void *tls_server_thread(void *argument) {
 				int length = snprintf(header, sizeof header,
 				                      "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
 				                      "Content-Length: %zu\r\nConnection: close\r\n\r\n",
-				                      server->body_length);
+				                      strlen(TLS_BODY));
 				(void)SSL_write(ssl, header, length);
-				(void)SSL_write(ssl, server->body, (int)server->body_length);
+				(void)SSL_write(ssl, TLS_BODY, (int)strlen(TLS_BODY));
 				SSL_shutdown(ssl);
 			}
 			SSL_free(ssl);
@@ -117,7 +62,11 @@ static void *tls_server_thread(void *argument) {
 	return NULL;
 }
 
-static tls_server *tls_server_start(const char *cert_path, const char *key_path, const char *body) {
+/**
+ * Serves TLS on an ephemeral loopback port with one fixture certificate and
+ * its key, so a test can drive a real handshake without leaving the host.
+ */
+static tls_server *tls_server_start(const char *cert_path, const char *key_path) {
 	tls_server *server = calloc(1, sizeof *server);
 	if (server == NULL) {
 		return NULL;
@@ -152,8 +101,6 @@ static tls_server *tls_server_start(const char *cert_path, const char *key_path,
 	socklen_t length = sizeof address;
 	getsockname(server->listen_fd, (struct sockaddr *)&address, &length);
 	server->port = ntohs(address.sin_port);
-	snprintf(server->body, sizeof server->body, "%s", body);
-	server->body_length = strlen(server->body);
 	__atomic_store_n(&server->running, 1, __ATOMIC_SEQ_CST);
 	if (pthread_create(&server->thread, NULL, tls_server_thread, server) != 0) {
 		close(server->listen_fd);
@@ -176,70 +123,167 @@ static void tls_server_stop(tls_server *server) {
 	free(server);
 }
 
-typedef struct {
-	raiju_platform base;
-	char bundle[1200];
-} tls_platform;
-
-static int tls_ca_bundle(void *ctx, char *buffer, size_t capacity) {
-	tls_platform *platform = ctx;
-	snprintf(buffer, capacity, "%s", platform->bundle);
-	return 0;
+/**
+ * Writes the absolute path of one frozen fixture into out, and fails the run
+ * rather than testing a truncated path.
+ */
+static void fixture_path(char *out, size_t capacity, const char *name) {
+	int written = snprintf(out, capacity, "%s/tls/%s", RAIJU_TEST_FIXTURE_DIR, name);
+	CHECK(written > 0 && (size_t)written < capacity);
 }
 
-static void a_real_https_fetch_honours_the_ca_bundle(void) {
-	char directory[1024];
-	if (raiju_test_tmpdir(directory, sizeof directory, "tls") != 0) {
-		CHECK(false);
-		return;
+/**
+ * Fetches the served blob through the built-in client, with the platform hook
+ * naming store_path as the trust store, or the default store when it is empty.
+ */
+static int fetch_blob(const tls_server *server, const char *store_path, raiju_fetch_response *response) {
+	raiju_fake_platform fake;
+	raiju_fake_platform_init(&fake);
+	CHECK(strlen(store_path) < sizeof fake.ca_bundle);
+	snprintf(fake.ca_bundle, sizeof fake.ca_bundle, "%s", store_path);
+	char url[128];
+	snprintf(url, sizeof url, "https://127.0.0.1:%u/blob.bin", (unsigned)server->port);
+	return raiju_fetch_default()(&fake.base, RAIJU_FETCH_GET, url, NULL, TLS_MAX_BYTES, TLS_TIMEOUT_MS, response);
+}
+
+static void check_accepted(const tls_server *server, const char *store_path) {
+	raiju_fetch_response response;
+	int result = fetch_blob(server, store_path, &response);
+	CHECK_INT(result, 0);
+	if (result == 0) {
+		CHECK_INT(response.status, 200);
+		CHECK_STR(response.body, TLS_BODY);
 	}
-	char cert_path[1200];
-	char key_path[1200];
-	char other_cert_path[1200];
-	char other_key_path[1200];
-	snprintf(cert_path, sizeof cert_path, "%s/cert.pem", directory);
-	snprintf(key_path, sizeof key_path, "%s/key.pem", directory);
-	snprintf(other_cert_path, sizeof other_cert_path, "%s/other-cert.pem", directory);
-	snprintf(other_key_path, sizeof other_key_path, "%s/other-key.pem", directory);
-	CHECK(write_self_signed(cert_path, key_path, "127.0.0.1"));
-	CHECK(write_self_signed(other_cert_path, other_key_path, "127.0.0.1"));
-	static const char body[] = "raiju tls body";
-	tls_server *server = tls_server_start(cert_path, key_path, body);
+	raiju_fetch_response_free(&response);
+}
+
+static void check_refused(const tls_server *server, const char *store_path) {
+	raiju_fetch_response response;
+	CHECK(fetch_blob(server, store_path, &response) != 0);
+	raiju_fetch_response_free(&response);
+}
+
+/**
+ * Serves one leaf fixture, named without its extension, on an ephemeral
+ * loopback port and runs one store against it.
+ */
+static void with_leaf_server(const char *leaf, const char *store_path, bool expect_accept) {
+	char cert_name[64];
+	char key_name[64];
+	CHECK(strlen(leaf) + 8 < sizeof cert_name);
+	snprintf(cert_name, sizeof cert_name, "%s.pem", leaf);
+	snprintf(key_name, sizeof key_name, "%s-key.pem", leaf);
+	char cert[1200];
+	char key[1200];
+	fixture_path(cert, sizeof cert, cert_name);
+	fixture_path(key, sizeof key, key_name);
+	tls_server *server = tls_server_start(cert, key);
 	CHECK(server != NULL);
 	if (server != NULL) {
-		tls_platform trusted;
-		memset(&trusted, 0, sizeof trusted);
-		trusted.base.ca_bundle_path = tls_ca_bundle;
-		trusted.base.ctx = &trusted;
-		snprintf(trusted.bundle, sizeof trusted.bundle, "%s", cert_path);
-		char url[128];
-		snprintf(url, sizeof url, "https://127.0.0.1:%u/blob.bin", server->port);
-		raiju_fetch_response response;
-		CHECK_INT(raiju_fetch_default()(&trusted.base, RAIJU_FETCH_GET, url, NULL, 4096, 5000, &response), 0);
-		CHECK_INT(response.status, 200);
-		CHECK_STR(response.body, body);
-		raiju_fetch_response_free(&response);
-
-		tls_platform stranger;
-		memset(&stranger, 0, sizeof stranger);
-		stranger.base.ca_bundle_path = tls_ca_bundle;
-		stranger.base.ctx = &stranger;
-		snprintf(stranger.bundle, sizeof stranger.bundle, "%s", other_cert_path);
-		raiju_fetch_response failed;
-		CHECK(raiju_fetch_default()(&stranger.base, RAIJU_FETCH_GET, url, NULL, 4096, 5000, &failed) != 0);
-		raiju_fetch_response_free(&failed);
-
+		if (expect_accept) {
+			check_accepted(server, store_path);
+		} else {
+			check_refused(server, store_path);
+		}
 		tls_server_stop(server);
 	}
+}
+
+typedef struct {
+	char previous[2048];
+	bool had_previous;
+} saved_store;
+
+/**
+ * Points the default trust store at path for the rest of the test, remembering
+ * what SSL_CERT_FILE held so another test never inherits the redirection.
+ */
+static void redirect_default_store(saved_store *saved, const char *path) {
+	const char *current = getenv("SSL_CERT_FILE");
+	saved->had_previous = current != NULL;
+	snprintf(saved->previous, sizeof saved->previous, "%s", current != NULL ? current : "");
+	setenv("SSL_CERT_FILE", path, 1);
+}
+
+static void restore_default_store(const saved_store *saved) {
+	if (saved->had_previous) {
+		setenv("SSL_CERT_FILE", saved->previous, 1);
+	} else {
+		unsetenv("SSL_CERT_FILE");
+	}
+}
+
+static void a_missing_store_refuses_the_fetch(void) {
+	char directory[1024];
+	CHECK_INT(raiju_test_tmpdir(directory, sizeof directory, "tls-missing-store"), 0);
+	char absent[1200];
+	snprintf(absent, sizeof absent, "%s/absent-ca.pem", directory);
+	with_leaf_server("leaf-ip", absent, false);
 	raiju_test_rmtree(directory);
 }
 
+static void an_empty_store_refuses_the_fetch(void) {
+	char store[1200];
+	fixture_path(store, sizeof store, "empty-ca.pem");
+	with_leaf_server("leaf-ip", store, false);
+}
+
+static void a_store_that_did_not_issue_the_chain_refuses_the_fetch(void) {
+	char store[1200];
+	fixture_path(store, sizeof store, "stranger-ca.pem");
+	with_leaf_server("leaf-ip", store, false);
+}
+
+static void the_store_that_issued_the_chain_accepts_the_fetch(void) {
+	char store[1200];
+	fixture_path(store, sizeof store, "root-ca.pem");
+	with_leaf_server("leaf-ip", store, true);
+}
+
+static void the_default_store_is_consulted_and_still_verifies(void) {
+	char issuer[1200];
+	char stranger[1200];
+	fixture_path(issuer, sizeof issuer, "root-ca.pem");
+	fixture_path(stranger, sizeof stranger, "stranger-ca.pem");
+	saved_store saved;
+	redirect_default_store(&saved, issuer);
+	with_leaf_server("leaf-ip", "", true);
+	redirect_default_store(&saved, stranger);
+	with_leaf_server("leaf-ip", "", false);
+	restore_default_store(&saved);
+}
+
+static void an_ip_literal_host_matches_the_ip_subject_alt_name(void) {
+	char store[1200];
+	fixture_path(store, sizeof store, "root-ca.pem");
+	with_leaf_server("leaf-ip", store, true);
+	with_leaf_server("leaf-dns", store, false);
+}
+
 void run_tls_tests(void) {
-	RUN_TEST(a_real_https_fetch_honours_the_ca_bundle);
+	RUN_TEST(a_missing_store_refuses_the_fetch);
+	RUN_TEST(an_empty_store_refuses_the_fetch);
+	RUN_TEST(a_store_that_did_not_issue_the_chain_refuses_the_fetch);
+	RUN_TEST(the_store_that_issued_the_chain_accepts_the_fetch);
+	RUN_TEST(the_default_store_is_consulted_and_still_verifies);
+	RUN_TEST(an_ip_literal_host_matches_the_ip_subject_alt_name);
 }
 
 #else
 
-void run_tls_tests(void) {}
+/**
+ * Fails the run when the build has no OpenSSL, so the trust-store contract
+ * cannot drop out of the suite unnoticed on a builder that lost TLS.
+ */
+static void the_trust_store_contract_needs_a_tls_build(void) {
+	fprintf(stderr,
+	        "tls: this build has no OpenSSL, so RAIJU_FETCH_TLS is undefined and the trust-store "
+	        "contract is untested; install pkg-config and openssl (libssl-dev, or brew openssl) and rerun\n");
+	CHECK(false);
+}
+
+void run_tls_tests(void) {
+	RUN_TEST(the_trust_store_contract_needs_a_tls_build);
+}
 
 #endif
