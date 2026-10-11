@@ -285,12 +285,20 @@ Total time then becomes max(download, extraction) instead of their sum, and the 
 | State | Raiju behaviour |
 |---|---|
 | On, screen on or off | Full speed |
-| Idle timer about to trigger rest mode | **Keep-awake:** while any task is active, the supervisor periodically resets the idle timer (PS4 had `sceSystemServicePowerTick`; the PS5 equivalent needs confirming in M1). Once the queue is empty, the console sleeps normally. |
+| Idle timer about to trigger rest mode | **Keep-awake:** while any task is active, the supervisor periodically resets the idle timer with `sceSystemServicePowerTick`, `sceShellCoreUtilResetAutoPowerDownTimer` and `sceShellCoreUtilSignalUserInput` — all three exported by `libSceSystemService`, and confirmed callable from a payload on 13600007 (#8) — and `sceSystemServiceReceiveEvent` reports `before_sleep` (0x10000001) and `on_resume` (0x10000000), so the supervisor can also react to a rest mode it cannot prevent. Once the queue is empty, the console sleeps normally. |
 | Rest mode | Userland is suspended, so **no downloading**. On resume: if the payload survived, aria2 retries its connections and continues. If not, re-send the ELF and Raiju re-adds its jobs, which resume from their control files. |
 | Off / reboot | Payload is gone. Re-send the ELF and Raiju re-adds its jobs. |
 | Wake from network (research) | The Remote Play wake packet (UDP 9302 on PS5) plus a registration credential can wake the console. The payload must still be re-sent or auto-loaded afterwards. |
 
 Downloading during rest mode itself isn't possible from a payload.
+
+Measured in #8, and still open there: the three tick calls and the event call all resolve and return
+success from a payload, and the ticks run on a timer and stop when released. Whether the hold really
+survives the console's own idle timeout for hours, and what the payload, its sockets and the jailbreak
+do across a rest mode and resume, need a console left idle for longer than the rest-mode timer — a
+payload run can be started and left, and `payload/spikes/power` reports socket health on every resume
+event. Poll the event call no faster than a second or so: every one goes through LNC, and the system
+logs a `getAppStatus` line for each.
 
 ## Security
 
