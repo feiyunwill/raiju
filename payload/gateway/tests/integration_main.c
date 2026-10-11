@@ -22,6 +22,8 @@
 #include "raiju/platform.h"
 #include "raiju/proxy.h"
 
+#include "fixture_server.h"
+
 static int integration_checks = 0;
 static int integration_failures = 0;
 
@@ -263,6 +265,97 @@ static bool aria2_installed(void) {
 	return status == 0;
 }
 
+#define DUMP_TITLE_ID "PPSA24003"
+
+static void zip_put16(unsigned char *out, unsigned value) {
+	out[0] = (unsigned char)(value & 0xFF);
+	out[1] = (unsigned char)((value >> 8) & 0xFF);
+}
+
+static void zip_put32(unsigned char *out, unsigned value) {
+	out[0] = (unsigned char)(value & 0xFF);
+	out[1] = (unsigned char)((value >> 8) & 0xFF);
+	out[2] = (unsigned char)((value >> 16) & 0xFF);
+	out[3] = (unsigned char)((value >> 24) & 0xFF);
+}
+
+static unsigned zip_crc32(const unsigned char *data, size_t length) {
+	unsigned crc = 0xFFFFFFFFu;
+	for (size_t i = 0; i < length; i++) {
+		crc ^= data[i];
+		for (int bit = 0; bit < 8; bit++) {
+			crc = (crc >> 1) ^ (0xEDB88320u & (unsigned)(-(int)(crc & 1)));
+		}
+	}
+	return crc ^ 0xFFFFFFFFu;
+}
+
+/**
+ * Builds a stored zip holding a folder dump (sce_sys/param.json and
+ * sce_sys/eboot.bin) and returns its length in bytes, or 0 on overflow.
+ */
+static size_t build_dump_zip(unsigned char *out, size_t capacity) {
+	static const char param[] = "{\"titleId\":\"" DUMP_TITLE_ID "\"}";
+	static const char eboot[] = "ELF-eboot";
+	struct {
+		const char *name;
+		const char *data;
+		size_t length;
+		size_t offset;
+	} entries[] = {
+	    {"sce_sys/param.json", param, sizeof param - 1, 0},
+	    {"sce_sys/eboot.bin", eboot, sizeof eboot - 1, 0},
+	};
+	size_t count = sizeof entries / sizeof entries[0];
+	size_t needed = 0;
+	size_t central_needed = 0;
+	for (size_t i = 0; i < count; i++) {
+		needed += 30 + strlen(entries[i].name) + entries[i].length;
+		central_needed += 46 + strlen(entries[i].name);
+	}
+	if (needed + central_needed + 22 > capacity) {
+		return 0;
+	}
+	memset(out, 0, needed + central_needed + 22);
+	size_t cursor = 0;
+	for (size_t i = 0; i < count; i++) {
+		size_t name_length = strlen(entries[i].name);
+		entries[i].offset = cursor;
+		unsigned char *entry = out + cursor;
+		zip_put32(entry, 0x04034b50);
+		zip_put16(entry + 4, 20);
+		zip_put32(entry + 14, zip_crc32((const unsigned char *)entries[i].data, entries[i].length));
+		zip_put32(entry + 18, (unsigned)entries[i].length);
+		zip_put32(entry + 22, (unsigned)entries[i].length);
+		zip_put16(entry + 26, (unsigned)name_length);
+		memcpy(entry + 30, entries[i].name, name_length);
+		memcpy(entry + 30 + name_length, entries[i].data, entries[i].length);
+		cursor += 30 + name_length + entries[i].length;
+	}
+	size_t central_start = cursor;
+	for (size_t i = 0; i < count; i++) {
+		size_t name_length = strlen(entries[i].name);
+		unsigned char *entry = out + cursor;
+		zip_put32(entry, 0x02014b50);
+		zip_put16(entry + 4, 20);
+		zip_put16(entry + 6, 20);
+		zip_put32(entry + 16, zip_crc32((const unsigned char *)entries[i].data, entries[i].length));
+		zip_put32(entry + 20, (unsigned)entries[i].length);
+		zip_put32(entry + 24, (unsigned)entries[i].length);
+		zip_put16(entry + 28, (unsigned)name_length);
+		zip_put32(entry + 42, (unsigned)entries[i].offset);
+		memcpy(entry + 46, entries[i].name, name_length);
+		cursor += 46 + name_length;
+	}
+	unsigned char *end = out + cursor;
+	zip_put32(end, 0x06054b50);
+	zip_put16(end + 8, (unsigned)count);
+	zip_put16(end + 10, (unsigned)count);
+	zip_put32(end + 12, (unsigned)(cursor - central_start));
+	zip_put32(end + 16, (unsigned)central_start);
+	return cursor + 22;
+}
+
 static pid_t launch_aria2(const char *options_path) {
 	pid_t pid = fork();
 	if (pid == 0) {
@@ -423,6 +516,69 @@ int main(void) {
 			close(lan_fd);
 		}
 	}
+
+	raiju_fixture_server *fixture = raiju_fixture_server_start();
+	CHECK(fixture != NULL);
+	unsigned char archive[4096];
+	size_t archive_size = build_dump_zip(archive, sizeof archive);
+	CHECK(archive_size > 0);
+	CHECK(raiju_fixture_server_add_file(fixture, "/dump.zip", archive, archive_size));
+	char fixture_uri[128];
+	snprintf(fixture_uri, sizeof fixture_uri, "http://127.0.0.1:%u/dump.zip", raiju_fixture_server_port(fixture));
+
+	char request_body[2048];
+	char job_status[1024];
+	snprintf(request_body, sizeof request_body, "{\"uri\":\"%s\"}", fixture_uri);
+	CHECK_INT(http_request("127.0.0.1", port, "POST", "/api/probe", cookie, request_body, &code, job_status,
+	                       sizeof job_status),
+	          0);
+	CHECK_INT(code, 200);
+	CHECK(strstr(job_status, "\"kind\":\"zip\"") != NULL);
+	CHECK(strstr(job_status, "\"uncompressedKnown\":true") != NULL);
+	size_t expected_bytes = strlen("{\"titleId\":\"PPSA24003\"}") + strlen("ELF-eboot");
+	char expected[64];
+	snprintf(expected, sizeof expected, "\"uncompressedSize\":%zu", expected_bytes);
+	CHECK(strstr(job_status, expected) != NULL);
+
+	char install_dir[1200];
+	snprintf(install_dir, sizeof install_dir, "%s/install", directory);
+	CHECK(raiju_mkdir_p(install_dir));
+	CHECK(raiju_allowlist_add(&gateway->allowlist, install_dir));
+	snprintf(request_body, sizeof request_body,
+	         "{\"id\":\"0123456789abcdef\",\"uri\":\"%s\",\"destination\":\"%s\",\"kind\":\"zip\",\"size\":%zu}",
+	         fixture_uri, install_dir, archive_size);
+	CHECK_INT(http_request("127.0.0.1", port, "POST", "/api/jobs", cookie, request_body, &code, job_status,
+	                       sizeof job_status),
+	          0);
+	CHECK_INT(code, 201);
+
+	bool ready = false;
+	for (int i = 0; i < 150 && !ready; i++) {
+		if (http_request("127.0.0.1", port, "GET", "/api/jobs/0123456789abcdef", cookie, NULL, &code, job_status,
+		                 sizeof job_status) != 0) {
+			break;
+		}
+		if (strstr(job_status, "\"stage\":\"ready\"") != NULL) {
+			ready = true;
+			break;
+		}
+		if (strstr(job_status, "\"status\":\"failed\"") != NULL) {
+			fprintf(stderr, "integration: job failed: %s\n", job_status);
+			break;
+		}
+		struct timespec pause = {0, 200 * 1000 * 1000};
+		nanosleep(&pause, NULL);
+	}
+	CHECK(ready);
+	char installed[1300];
+	snprintf(installed, sizeof installed, "%s/%s", install_dir, DUMP_TITLE_ID);
+	struct stat installed_info;
+	CHECK(stat(installed, &installed_info) == 0 && S_ISDIR(installed_info.st_mode));
+	char param_path[1400];
+	snprintf(param_path, sizeof param_path, "%s/sce_sys/param.json", installed);
+	CHECK(access(param_path, R_OK) == 0);
+
+	raiju_fixture_server_stop(fixture);
 
 	raiju_gateway_stop(gateway);
 	raiju_gateway_destroy(gateway);

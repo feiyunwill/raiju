@@ -78,8 +78,8 @@ bool raiju_atomic_write(const char *path, const void *bytes, size_t length) {
 	return sync_parent(path) == 0;
 }
 
-char *raiju_read_file(const char *path, size_t max_bytes, size_t *out_length) {
-	int fd = open(path, O_RDONLY);
+char *raiju_read_file_ex(const char *path, size_t max_bytes, bool no_follow, size_t *out_length) {
+	int fd = open(path, no_follow ? O_RDONLY | O_NOFOLLOW : O_RDONLY);
 	if (fd < 0) {
 		return NULL;
 	}
@@ -113,6 +113,10 @@ char *raiju_read_file(const char *path, size_t max_bytes, size_t *out_length) {
 		*out_length = length;
 	}
 	return buffer;
+}
+
+char *raiju_read_file(const char *path, size_t max_bytes, size_t *out_length) {
+	return raiju_read_file_ex(path, max_bytes, false, out_length);
 }
 
 bool raiju_mkdir_p(const char *path) {

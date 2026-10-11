@@ -9,15 +9,12 @@
 #include <string.h>
 #include <time.h>
 
+#include "raiju/api.h"
 #include "raiju/assets.h"
 #include "raiju/auth.h"
 #include "raiju/fsutil.h"
 
 #define RAIJU_STATIC_MAX (16u * 1024u * 1024u)
-
-static const char *gateway_version(void) {
-	return "0.0.0";
-}
 
 static const char *find_needle(const char *start, const char *limit, const char *needle, size_t needle_length) {
 	for (const char *cursor = start; cursor + needle_length <= limit; cursor++) {
@@ -113,24 +110,6 @@ static bool serve_static(raiju_gateway *gateway, const raiju_http_request *reque
 	raiju_response_set_header(response, "Content-Type", raiju_assets_mime(asset->path));
 	raiju_response_write(response, asset->bytes, asset->length);
 	return true;
-}
-
-static int handle_status(const raiju_http_request *request, raiju_http_response *response, void *context) {
-	(void)request;
-	raiju_gateway *gateway = context;
-	char address[64];
-	gateway->config.platform->interface_ip(gateway->config.platform->ctx, address, sizeof address);
-	uint64_t uptime = (uint64_t)time(NULL) - gateway->started_at;
-	raiju_strbuf document;
-	raiju_strbuf_init(&document);
-	raiju_strbuf_appendf(&document, "{\"name\":\"raiju\",\"version\":\"%s\",\"uptime\":%llu,"
-	                               "\"firmware\":\"unknown\",\"platform\":\"%s\",\"ip\":\"%s\","
-	                               "\"engine\":\"unknown\"}",
-	                     gateway_version(), (unsigned long long)uptime,
-	                     gateway->config.platform == raiju_platform_host() ? "host" : "ps5", address);
-	raiju_response_json(response, 200, raiju_strbuf_cstr(&document));
-	raiju_strbuf_free(&document);
-	return 200;
 }
 
 static int handle_pair(const raiju_http_request *request, raiju_http_response *response, void *context) {
@@ -259,7 +238,6 @@ static int handle_jsonrpc(const raiju_http_request *request, raiju_http_response
 static bool register_default_routes(raiju_gateway *gateway) {
 	const raiju_route routes[] = {
 	    {"POST", "/api/pair", handle_pair, gateway, false},
-	    {"GET", "/api/status", handle_status, gateway, false},
 	    {"GET", "/api/devices", handle_devices_list, gateway, true},
 	    {"DELETE", "/api/devices/:id", handle_device_delete, gateway, true},
 	    {"POST", "/jsonrpc", handle_jsonrpc, gateway, true},
@@ -297,10 +275,23 @@ raiju_gateway *raiju_gateway_create(const raiju_gateway_config *config) {
 		snprintf(gateway->www_dir, sizeof gateway->www_dir, "%s/www", config->data_dir);
 	}
 	gateway->config.www_dir = gateway->www_dir;
+	if (config->install_root != NULL) {
+		snprintf(gateway->install_root, sizeof gateway->install_root, "%s", config->install_root);
+	} else {
+		snprintf(gateway->install_root, sizeof gateway->install_root, "/data/homebrew");
+	}
+	gateway->config.install_root = gateway->install_root;
+	if (gateway->config.fetch == NULL) {
+		gateway->config.fetch = raiju_fetch_default();
+	}
 	char devices_path[RAIJU_PATH_MAX];
 	snprintf(devices_path, sizeof devices_path, "%s/session/devices.json", config->data_dir);
 	gateway->started_at = (uint64_t)time(NULL);
 	if (!raiju_pairing_init(&gateway->pairing, config->platform, devices_path) || !register_default_routes(gateway)) {
+		free(gateway);
+		return NULL;
+	}
+	if (raiju_api_register(gateway) == NULL) {
 		free(gateway);
 		return NULL;
 	}
@@ -346,5 +337,8 @@ int raiju_gateway_handle(raiju_gateway *gateway, raiju_http_request *request, ra
 }
 
 void raiju_gateway_destroy(raiju_gateway *gateway) {
+	if (gateway != NULL) {
+		raiju_api_unregister(gateway);
+	}
 	free(gateway);
 }

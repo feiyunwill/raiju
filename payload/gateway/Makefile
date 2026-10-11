@@ -1,7 +1,20 @@
 CC ?= cc
 CFLAGS ?= -O1 -g
 WARNINGS := -Wall -Wextra -Werror -std=c11 -pedantic
-CPPFLAGS := -Iinclude -Isrc -I../third_party/civetweb
+PKG_CONFIG ?= pkg-config
+BREW_OPENSSL := $(shell command -v brew >/dev/null 2>&1 && brew --prefix openssl 2>/dev/null)
+OPENSSL_PKG_CONFIG := PKG_CONFIG_PATH="$(if $(BREW_OPENSSL),$(BREW_OPENSSL)/lib/pkgconfig:)$$PKG_CONFIG_PATH" $(PKG_CONFIG)
+OPENSSL_LIBS := $(shell $(OPENSSL_PKG_CONFIG) --libs openssl 2>/dev/null)
+BREW_LIBARCHIVE := $(shell command -v brew >/dev/null 2>&1 && brew --prefix libarchive 2>/dev/null)
+LIBARCHIVE_PKG_CONFIG := PKG_CONFIG_PATH="$(if $(BREW_LIBARCHIVE),$(BREW_LIBARCHIVE)/lib/pkgconfig:)$$PKG_CONFIG_PATH" $(PKG_CONFIG)
+RAIJU_VERSION ?= 0.0.0
+CPPFLAGS := -Iinclude -Isrc -I../third_party/civetweb -I../processor/include -DRAIJU_VERSION=\"$(RAIJU_VERSION)\"
+CPPFLAGS += $(shell $(LIBARCHIVE_PKG_CONFIG) --cflags libarchive)
+LDLIBS += $(shell $(LIBARCHIVE_PKG_CONFIG) --libs libarchive)
+ifneq ($(OPENSSL_LIBS),)
+CPPFLAGS += $(shell $(OPENSSL_PKG_CONFIG) --cflags openssl) -DRAIJU_FETCH_TLS
+LDLIBS += $(OPENSSL_LIBS)
+endif
 
 CIVETWEB_VERSION := 1.16
 CIVETWEB_DIR := ../third_party/civetweb
@@ -27,6 +40,10 @@ CORE_SOURCES := \
 	src/allowlist.c \
 	src/auth.c \
 	src/proxy.c \
+	src/fetch.c \
+	src/art.c \
+	src/api.c \
+	src/api_probe.c \
 	src/supervisor.c \
 	src/http.c \
 	src/gateway.c
@@ -36,6 +53,9 @@ TEST_SOURCES := $(wildcard tests/test_*.c)
 INTEGRATION_SOURCES := $(wildcard tests/integration_*.c)
 
 CORE_OBJECTS := $(CORE_SOURCES:%.c=$(BUILD)/%.o)
+PROCESSOR_DIR := ../processor
+PROCESSOR_SOURCES := $(wildcard $(PROCESSOR_DIR)/src/*.c)
+PROCESSOR_OBJECTS := $(patsubst $(PROCESSOR_DIR)/src/%.c,$(BUILD)/processor/%.o,$(PROCESSOR_SOURCES))
 HEADERS := $(wildcard include/raiju/*.h src/*.h tests/*.h)
 
 GEN_EMBED_ASSETS := $(BUILD)/tools/gen_assets
@@ -48,6 +68,7 @@ CIVETWEB_OBJECT := $(BUILD)/third_party/civetweb/civetweb.o
 SERVER_OBJECT := $(BUILD)/src/server.o
 MAIN_OBJECT := $(BUILD)/src/main.o
 TEST_OBJECTS := $(TEST_SOURCES:%.c=$(BUILD)/%.o)
+TEST_SUPPORT_OBJECTS := $(BUILD)/tests/fixture_server.o
 INTEGRATION_OBJECTS := $(INTEGRATION_SOURCES:%.c=$(BUILD)/%.o)
 
 GATEWAY_BINARY := $(BUILD)/raiju-gateway
@@ -69,14 +90,18 @@ SANITIZE_FLAGS := -fsanitize=address,undefined -fno-sanitize-recover=all -fno-om
 sanitize:
 	$(MAKE) BUILD=$(BUILD)/sanitize CFLAGS="-O1 -g $(SANITIZE_FLAGS)" LDFLAGS="$(SANITIZE_FLAGS)" test
 
-$(GATEWAY_BINARY): $(CORE_OBJECTS) $(SERVER_OBJECT) $(MAIN_OBJECT) $(ASSETS_TABLE_OBJECT) $(CIVETWEB_OBJECT)
+$(GATEWAY_BINARY): $(CORE_OBJECTS) $(PROCESSOR_OBJECTS) $(SERVER_OBJECT) $(MAIN_OBJECT) $(ASSETS_TABLE_OBJECT) $(CIVETWEB_OBJECT)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-$(TEST_BINARY): $(CORE_OBJECTS) $(TEST_OBJECTS) $(ASSETS_FIXTURE_OBJECT)
+$(TEST_BINARY): $(CORE_OBJECTS) $(PROCESSOR_OBJECTS) $(TEST_OBJECTS) $(TEST_SUPPORT_OBJECTS) $(ASSETS_FIXTURE_OBJECT)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-$(INTEGRATION_BINARY): $(CORE_OBJECTS) $(SERVER_OBJECT) $(INTEGRATION_OBJECTS) $(ASSETS_FIXTURE_OBJECT) $(CIVETWEB_OBJECT)
+$(INTEGRATION_BINARY): $(CORE_OBJECTS) $(PROCESSOR_OBJECTS) $(SERVER_OBJECT) $(INTEGRATION_OBJECTS) $(TEST_SUPPORT_OBJECTS) $(ASSETS_FIXTURE_OBJECT) $(CIVETWEB_OBJECT)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+$(BUILD)/processor/%.o: $(PROCESSOR_DIR)/src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(WARNINGS) $(CFLAGS) -c -o $@ $<
 
 $(BUILD)/%.o: %.c $(HEADERS)
 	@mkdir -p $(dir $@)

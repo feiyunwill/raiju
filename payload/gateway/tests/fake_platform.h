@@ -19,6 +19,7 @@ typedef struct {
 	int launch_count;
 	uint64_t total_bytes;
 	uint64_t free_bytes;
+	char firmware[32];
 } raiju_fake_platform;
 
 /**

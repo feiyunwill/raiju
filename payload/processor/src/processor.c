@@ -173,6 +173,17 @@ raiju_processor_status raiju_processor_retry(raiju_processor *processor, const c
 	return persist(processor);
 }
 
+raiju_processor_status raiju_processor_cancel(raiju_processor *processor, const char *id) {
+	raiju_job *job = raiju_processor_find(processor, id);
+	if (job == NULL) {
+		return RAIJU_PROCESSOR_NOT_FOUND;
+	}
+	if (raiju_job_cancel(&processor->pipeline, job) != 0) {
+		return RAIJU_PROCESSOR_WRONG_STAGE;
+	}
+	return persist(processor);
+}
+
 raiju_processor_status raiju_processor_discard(raiju_processor *processor, const char *id) {
 	raiju_job *job = raiju_processor_find(processor, id);
 	if (job == NULL) {

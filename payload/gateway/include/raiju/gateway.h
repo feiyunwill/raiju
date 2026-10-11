@@ -6,18 +6,22 @@
 #include <stdint.h>
 
 #include "raiju/allowlist.h"
+#include "raiju/fetch.h"
 #include "raiju/http.h"
 #include "raiju/pairing.h"
 #include "raiju/platform.h"
 #include "raiju/proxy.h"
 
-#define RAIJU_GATEWAY_MAX_ROUTES 24
+#define RAIJU_GATEWAY_MAX_ROUTES 32
+
+struct raiju_api;
 
 /**
  * The gateway's runtime inputs. Port 0 asks the OS for an ephemeral port the
  * caller reads back; bind_address NULL uses "0.0.0.0"; www_dir NULL defaults
  * to <data_dir>/www, and that directory overrides the embedded table whenever
- * the file asked for exists there.
+ * the file asked for exists there. fetch NULL uses the built-in client;
+ * install_root NULL defaults to /data/homebrew.
  */
 typedef struct {
 	const raiju_platform *platform;
@@ -27,6 +31,9 @@ typedef struct {
 	const char *www_dir;
 	const char *aria2_url;
 	const char *secret;
+	const char *install_root;
+	raiju_fetch_fn fetch;
+	void *fetch_context;
 	size_t max_body_bytes;
 } raiju_gateway_config;
 
@@ -42,10 +49,12 @@ typedef struct raiju_gateway {
 	raiju_pairing pairing;
 	raiju_allowlist allowlist;
 	char www_dir[RAIJU_PATH_MAX];
+	char install_root[RAIJU_PATH_MAX];
 	raiju_upstream upstream;
 	char secret[128];
 	raiju_route routes[RAIJU_GATEWAY_MAX_ROUTES];
 	size_t route_count;
+	struct raiju_api *api;
 	void *context;
 	uint16_t bound_port;
 	uint64_t started_at;

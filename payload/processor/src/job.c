@@ -154,6 +154,9 @@ int raiju_job_init(raiju_job *job, const raiju_job_options *options) {
 	    !raiju_job_file_name_valid(options->file_name)) {
 		return -1;
 	}
+	if (options->title_id != NULL && options->title_id[0] != '\0' && !raiju_title_id_valid(options->title_id)) {
+		return -1;
+	}
 	copy_bounded(job->id, sizeof job->id, options->id);
 	copy_bounded(job->install_root, sizeof job->install_root, options->install_root);
 	if (options->file_name != NULL) {
@@ -165,6 +168,10 @@ int raiju_job_init(raiju_job *job, const raiju_job_options *options) {
 	job->uncompressed_size = options->uncompressed_size;
 	job->keep_archive = options->keep_archive;
 	job->conflict_policy = options->conflict_policy;
+	if (options->title_id != NULL && options->title_id[0] != '\0') {
+		copy_bounded(job->title_id, sizeof job->title_id, options->title_id);
+		job->title_source = RAIJU_TITLE_SOURCE_USER;
+	}
 	return 0;
 }
 

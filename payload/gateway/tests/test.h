@@ -83,4 +83,24 @@ void run_proxy_tests(void);
  */
 void run_router_tests(void);
 
+/**
+ * Runs the outbound HTTP(S) client tests against a local fixture server.
+ */
+void run_fetch_tests(void);
+
+/**
+ * Runs the artwork parsing, cache and endpoint tests.
+ */
+void run_art_tests(void);
+
+/**
+ * Runs the /api status, storage, folders and jobs tests.
+ */
+void run_api_tests(void);
+
+/**
+ * Runs the probe tests against a local fixture server.
+ */
+void run_probe_tests(void);
+
 #endif

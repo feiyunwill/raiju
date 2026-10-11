@@ -22,6 +22,7 @@ typedef struct {
 	int (*escalate)(void *ctx);
 	int (*disk_usage)(void *ctx, const char *path, raiju_disk_usage *out);
 	int (*interface_ip)(void *ctx, char *buffer, size_t capacity);
+	int (*firmware)(void *ctx, char *buffer, size_t capacity);
 	int (*launch_engine)(void *ctx, const char *executable, const char *options_file);
 	int (*random_bytes)(void *ctx, void *buffer, size_t length);
 	void *ctx;
@@ -30,8 +31,9 @@ typedef struct {
 /**
  * The host implementation used by tests and by a desktop build: it writes
  * notifications to stderr, treats escalation as a no-op, reads disk usage
- * through statvfs, finds the first non-loopback IPv4 address, launches the
- * engine with fork/exec and reads randomness from /dev/urandom.
+ * through statvfs, finds the first non-loopback IPv4 address, reports the
+ * firmware version as "unknown", launches the engine with fork/exec and
+ * reads randomness from /dev/urandom.
  */
 const raiju_platform *raiju_platform_host(void);
 

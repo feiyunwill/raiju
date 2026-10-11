@@ -207,6 +207,12 @@ int raiju_job_dir(const char *root, const raiju_job *job, char *out, size_t out_
  * to AWAITING_TITLE_ID when none of them has a title ID.
  */
 static void resolve_title(raiju_job *job, const char *param_title_id, const char *inner_name) {
+	if (job->title_source == RAIJU_TITLE_SOURCE_USER && job->title_id[0] != '\0') {
+		job->install_path[0] = '\0';
+		job->conflict_choice = RAIJU_CONFLICT_ASK;
+		job->stage = RAIJU_STAGE_INSTALLING;
+		return;
+	}
 	raiju_title_resolution resolution = raiju_resolve_title_id(param_title_id, job->file_name);
 	if (resolution.source == RAIJU_TITLE_SOURCE_NONE && inner_name != NULL) {
 		resolution = raiju_resolve_title_id(NULL, inner_name);
@@ -682,6 +688,18 @@ int raiju_job_resolve_conflict(const raiju_pipeline *pipeline, raiju_job *job, r
 	}
 	job->conflict_choice = choice;
 	job->stage = RAIJU_STAGE_INSTALLING;
+	return 0;
+}
+
+int raiju_job_cancel(const raiju_pipeline *pipeline, raiju_job *job) {
+	if (pipeline == NULL || job == NULL || job->stage == RAIJU_STAGE_READY || job->stage == RAIJU_STAGE_CANCELLED) {
+		return -1;
+	}
+	char staging[RAIJU_JOB_PATH_MAX];
+	if (raiju_job_dir(pipeline->staging_root, job, staging, sizeof staging) != 0 || remove_tree(staging) != 0) {
+		return -1;
+	}
+	job->stage = RAIJU_STAGE_CANCELLED;
 	return 0;
 }
 

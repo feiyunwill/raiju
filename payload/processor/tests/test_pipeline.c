@@ -365,7 +365,7 @@ static raiju_job *start_job(world *w, raiju_processor *processor, const scenario
 	char *path = download_path(w, s);
 	CHECK(path != NULL && s->make(path) == 0);
 	CHECK_INT(raiju_processor_open(processor, &w->pipeline, w->jobs), RAIJU_PROCESSOR_OK);
-	raiju_job_options options = {JOB_ID, NULL, w->install, 0, 0, keep_archive, policy};
+	raiju_job_options options = {JOB_ID, NULL, w->install, 0, 0, keep_archive, policy, NULL};
 	CHECK_INT(raiju_processor_add(processor, &options, RAIJU_CATEGORY_OTHER, NULL), RAIJU_PROCESSOR_OK);
 	raiju_job *job = raiju_processor_find(processor, JOB_ID);
 	CHECK(job != NULL && job->stage == RAIJU_STAGE_DOWNLOADING);
@@ -582,7 +582,7 @@ static void a_kill_while_downloading_keeps_the_job(void) {
 	raiju_processor processor;
 	CHECK_INT(raiju_processor_open(&processor, &w.pipeline, w.jobs), RAIJU_PROCESSOR_OK);
 	CHECK_INT(processor.load_status, RAIJU_STORE_MISSING);
-	raiju_job_options options = {JOB_ID, "CUSA00001-game.zip", w.install, 0, 0, false, RAIJU_CONFLICT_ASK};
+	raiju_job_options options = {JOB_ID, "CUSA00001-game.zip", w.install, 0, 0, false, RAIJU_CONFLICT_ASK, NULL};
 	CHECK_INT(raiju_processor_add(&processor, &options, RAIJU_CATEGORY_ARCHIVE, NULL), RAIJU_PROCESSOR_OK);
 	CHECK_INT(raiju_processor_run(&processor), RAIJU_PROCESSOR_OK);
 	raiju_processor_close(&processor);
@@ -907,7 +907,7 @@ static void a_size_mismatch_fails_and_retry_downloads_again(void) {
 	char *path = download_path(&w, &exfat_image);
 	CHECK(make_exfat(path) == 0);
 	CHECK_INT(raiju_processor_open(&processor, &w.pipeline, w.jobs), RAIJU_PROCESSOR_OK);
-	raiju_job_options options = {JOB_ID, NULL, w.install, 0, 0, false, RAIJU_CONFLICT_ASK};
+	raiju_job_options options = {JOB_ID, NULL, w.install, 0, 0, false, RAIJU_CONFLICT_ASK, NULL};
 	CHECK_INT(raiju_processor_add(&processor, &options, RAIJU_CATEGORY_IMAGE, NULL), RAIJU_PROCESSOR_OK);
 	CHECK_INT(raiju_processor_download_complete(&processor, JOB_ID, path, tree_bytes(path) + 1), RAIJU_PROCESSOR_OK);
 	CHECK_INT(raiju_processor_run(&processor), RAIJU_PROCESSOR_OK);
@@ -931,7 +931,7 @@ static void a_download_failure_fails_the_job(void) {
 	CHECK(world_open(&w));
 	raiju_processor processor;
 	CHECK_INT(raiju_processor_open(&processor, &w.pipeline, w.jobs), RAIJU_PROCESSOR_OK);
-	raiju_job_options options = {JOB_ID, NULL, w.install, 0, 0, false, RAIJU_CONFLICT_ASK};
+	raiju_job_options options = {JOB_ID, NULL, w.install, 0, 0, false, RAIJU_CONFLICT_ASK, NULL};
 	CHECK_INT(raiju_processor_add(&processor, &options, RAIJU_CATEGORY_OTHER, NULL), RAIJU_PROCESSOR_OK);
 	CHECK_INT(raiju_processor_add(&processor, &options, RAIJU_CATEGORY_OTHER, NULL), RAIJU_PROCESSOR_DUPLICATE);
 	CHECK_INT(raiju_processor_download_failed(&processor, JOB_ID, "http 404\n"), RAIJU_PROCESSOR_OK);
@@ -953,7 +953,7 @@ static void a_bad_image_fails_classification_and_discard_removes_it(void) {
 	static const char html[] = "<!doctype html><title>404</title>";
 	CHECK(fixture_write(path, html, sizeof html - 1) == 0);
 	CHECK_INT(raiju_processor_open(&processor, &w.pipeline, w.jobs), RAIJU_PROCESSOR_OK);
-	raiju_job_options options = {JOB_ID, NULL, w.install, 0, 0, false, RAIJU_CONFLICT_ASK};
+	raiju_job_options options = {JOB_ID, NULL, w.install, 0, 0, false, RAIJU_CONFLICT_ASK, NULL};
 	CHECK_INT(raiju_processor_add(&processor, &options, RAIJU_CATEGORY_IMAGE, NULL), RAIJU_PROCESSOR_OK);
 	CHECK_INT(raiju_processor_download_complete(&processor, JOB_ID, path, 0), RAIJU_PROCESSOR_OK);
 	CHECK_INT(raiju_processor_run(&processor), RAIJU_PROCESSOR_OK);
@@ -1079,7 +1079,7 @@ static void space_accounting_counts_archive_and_contents(void) {
 	raiju_processor processor;
 	CHECK_INT(raiju_processor_open(&processor, &w.pipeline, w.jobs), RAIJU_PROCESSOR_OK);
 	w.free_bytes = 20 * gib;
-	raiju_job_options options = {JOB_ID, "game.7z", w.install, 10 * gib, 30 * gib, false, RAIJU_CONFLICT_ASK};
+	raiju_job_options options = {JOB_ID, "game.7z", w.install, 10 * gib, 30 * gib, false, RAIJU_CONFLICT_ASK, NULL};
 	CHECK_INT(raiju_processor_add(&processor, &options, RAIJU_CATEGORY_ARCHIVE, &report), RAIJU_PROCESSOR_NO_SPACE);
 	CHECK_INT(report.status, RAIJU_SPACE_NOT_ENOUGH);
 	CHECK(raiju_processor_find(&processor, JOB_ID) == NULL);
@@ -1111,7 +1111,7 @@ static void stage_rules_and_names_are_stable(void) {
 
 	raiju_pipeline pipeline = {"/tmp/staging", "/tmp/trash", NULL, NULL, NULL, NULL, NULL};
 	raiju_job job;
-	raiju_job_options options = {JOB_ID, NULL, "/data/homebrew", 0, 0, false, RAIJU_CONFLICT_ASK};
+	raiju_job_options options = {JOB_ID, NULL, "/data/homebrew", 0, 0, false, RAIJU_CONFLICT_ASK, NULL};
 	CHECK_INT(raiju_job_init(&job, &options), 0);
 	CHECK(!raiju_job_step(&pipeline, &job));
 	CHECK_INT(raiju_job_retry(&job), -1);
@@ -1132,6 +1132,78 @@ static void stage_rules_and_names_are_stable(void) {
 	CHECK_INT(raiju_job_init(&job, &options), -1);
 }
 
+static void cancel_removes_staging_and_keeps_the_download(void) {
+	world w;
+	CHECK(world_open(&w));
+	raiju_processor processor;
+	start_job(&w, &processor, &dump_zip, false, RAIJU_CONFLICT_ASK);
+	CHECK_INT(raiju_processor_step(&processor, JOB_ID), RAIJU_PROCESSOR_OK);
+	CHECK_INT(raiju_processor_step(&processor, JOB_ID), RAIJU_PROCESSOR_OK);
+	CHECK_INT(raiju_processor_find(&processor, JOB_ID)->stage, RAIJU_STAGE_EXTRACTING);
+	char *staging = fixture_path(w.staging, JOB_ID);
+	CHECK(staging != NULL && fixture_mkdir(w.staging) == 0 && fixture_mkdir(staging) == 0);
+	CHECK_INT(raiju_processor_cancel(&processor, JOB_ID), RAIJU_PROCESSOR_OK);
+	raiju_job *job = raiju_processor_find(&processor, JOB_ID);
+	CHECK(job != NULL && job->stage == RAIJU_STAGE_CANCELLED);
+	CHECK(!exists(staging));
+	char *download = download_path(&w, &dump_zip);
+	CHECK(exists(download));
+	check_root(&w, NULL, 0);
+	CHECK_INT(raiju_processor_run(&processor), RAIJU_PROCESSOR_OK);
+	CHECK_INT(raiju_processor_find(&processor, JOB_ID)->stage, RAIJU_STAGE_CANCELLED);
+	CHECK_INT(raiju_processor_cancel(&processor, JOB_ID), RAIJU_PROCESSOR_WRONG_STAGE);
+	CHECK_INT(raiju_processor_cancel(&processor, "missing"), RAIJU_PROCESSOR_NOT_FOUND);
+	free(download);
+	free(staging);
+	raiju_processor_close(&processor);
+	world_close(&w);
+}
+
+static void cancel_is_refused_once_ready(void) {
+	world w;
+	CHECK(world_open(&w));
+	raiju_processor processor;
+	start_job(&w, &processor, &exfat_image, false, RAIJU_CONFLICT_ASK);
+	CHECK_INT(raiju_processor_run(&processor), RAIJU_PROCESSOR_OK);
+	CHECK_INT(raiju_processor_find(&processor, JOB_ID)->stage, RAIJU_STAGE_READY);
+	CHECK_INT(raiju_processor_cancel(&processor, JOB_ID), RAIJU_PROCESSOR_WRONG_STAGE);
+	raiju_processor_close(&processor);
+	world_close(&w);
+}
+
+static void a_title_override_survives_classification(void) {
+	world w;
+	CHECK(world_open(&w));
+	raiju_processor processor;
+	char *path = download_path(&w, &exfat_image);
+	CHECK(make_exfat(path) == 0);
+	CHECK_INT(raiju_processor_open(&processor, &w.pipeline, w.jobs), RAIJU_PROCESSOR_OK);
+	raiju_job_options options = {JOB_ID, NULL, w.install, 0, 0, false, RAIJU_CONFLICT_ASK, "CUSA99999"};
+	CHECK_INT(raiju_processor_add(&processor, &options, RAIJU_CATEGORY_IMAGE, NULL), RAIJU_PROCESSOR_OK);
+	CHECK_INT(raiju_processor_download_complete(&processor, JOB_ID, path, tree_bytes(path)), RAIJU_PROCESSOR_OK);
+	CHECK_INT(raiju_processor_run(&processor), RAIJU_PROCESSOR_OK);
+	raiju_job *job = raiju_processor_find(&processor, JOB_ID);
+	CHECK(job != NULL && job->stage == RAIJU_STAGE_READY);
+	if (job != NULL) {
+		CHECK_STR(job->title_id, "CUSA99999");
+		CHECK_INT(job->title_source, RAIJU_TITLE_SOURCE_USER);
+		char *installed = fixture_path(w.install, "CUSA99999.exfat");
+		CHECK(verify_exfat(installed));
+		CHECK_STR(job->install_path, installed);
+		free(installed);
+	}
+	raiju_processor_close(&processor);
+	world_close(&w);
+
+	CHECK(world_open(&w));
+	CHECK_INT(raiju_processor_open(&processor, &w.pipeline, w.jobs), RAIJU_PROCESSOR_OK);
+	raiju_job_options bad = {JOB_ID, NULL, w.install, 0, 0, false, RAIJU_CONFLICT_ASK, "not-a-title"};
+	CHECK_INT(raiju_processor_add(&processor, &bad, RAIJU_CATEGORY_IMAGE, NULL), RAIJU_PROCESSOR_INVALID);
+	raiju_processor_close(&processor);
+	world_close(&w);
+	free(path);
+}
+
 void run_pipeline_tests(void) {
 	RUN_TEST(archive_goes_through_every_stage);
 	RUN_TEST(images_and_other_files_skip_extraction);
@@ -1146,6 +1218,9 @@ void run_pipeline_tests(void) {
 	RUN_TEST(replace_swaps_through_the_trash_folder);
 	RUN_TEST(a_kill_in_the_middle_of_a_replace_finishes_it);
 	RUN_TEST(cancel_leaves_the_install_root_alone);
+	RUN_TEST(cancel_removes_staging_and_keeps_the_download);
+	RUN_TEST(cancel_is_refused_once_ready);
+	RUN_TEST(a_title_override_survives_classification);
 	RUN_TEST(preset_policies_resolve_without_asking);
 	RUN_TEST(a_failed_rescan_keeps_files_and_retries);
 	RUN_TEST(a_failed_notification_retries_from_notifying);

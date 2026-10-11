@@ -15,7 +15,16 @@ bool raiju_atomic_write(const char *path, const void *bytes, size_t length);
 
 /**
  * Reads a whole file into a newly allocated NUL-terminated buffer the caller
- * frees. Returns NULL when the file is missing or larger than max_bytes.
+ * frees. Returns NULL when the file is missing, is not a regular file, or is
+ * larger than max_bytes. With no_follow set a symlink is refused instead of
+ * followed, which matters for files a client can name.
+ */
+char *raiju_read_file_ex(const char *path, size_t max_bytes, bool no_follow, size_t *out_length);
+
+/**
+ * Reads a whole file into a newly allocated NUL-terminated buffer the caller
+ * frees, following symlinks. Returns NULL when the file is missing or larger
+ * than max_bytes.
  */
 char *raiju_read_file(const char *path, size_t max_bytes, size_t *out_length);
 

@@ -19,6 +19,14 @@ int main(void) {
 	run_proxy_tests();
 	printf("router\n");
 	run_router_tests();
+	printf("fetch\n");
+	run_fetch_tests();
+	printf("art\n");
+	run_art_tests();
+	printf("api\n");
+	run_api_tests();
+	printf("probe\n");
+	run_probe_tests();
 	printf("%d tests, %d checks, %d failures\n", raiju_test_count, raiju_test_checks, raiju_test_failures);
 	return raiju_test_failures == 0 ? 0 : 1;
 }

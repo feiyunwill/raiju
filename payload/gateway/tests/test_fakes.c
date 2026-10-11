@@ -36,6 +36,12 @@ static int fake_interface_ip(void *ctx, char *buffer, size_t capacity) {
 	return 0;
 }
 
+static int fake_firmware(void *ctx, char *buffer, size_t capacity) {
+	raiju_fake_platform *fake = ctx;
+	snprintf(buffer, capacity, "%s", fake->firmware[0] != '\0' ? fake->firmware : "unknown");
+	return 0;
+}
+
 static int fake_launch_engine(void *ctx, const char *executable, const char *options_file) {
 	raiju_fake_platform *fake = ctx;
 	snprintf(fake->launched_executable, sizeof fake->launched_executable, "%s", executable);
@@ -62,6 +68,7 @@ const raiju_platform *raiju_fake_platform_init(raiju_fake_platform *fake) {
 	fake->base.escalate = fake_escalate;
 	fake->base.disk_usage = fake_disk_usage;
 	fake->base.interface_ip = fake_interface_ip;
+	fake->base.firmware = fake_firmware;
 	fake->base.launch_engine = fake_launch_engine;
 	fake->base.random_bytes = fake_random_bytes;
 	fake->base.ctx = fake;

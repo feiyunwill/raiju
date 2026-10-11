@@ -142,28 +142,60 @@ Libraries: libarchive (BSD), built with zstd, xz/lzma, zlib and bzip2. If benchm
 The gateway lives in `payload/gateway` and builds and tests on macOS and Linux with its own host Makefile (`make -C payload/gateway test`, `sanitize`), independent of the PS5 SDK. It is organised as:
 
 - `include/raiju/*.h` public headers; `src/` implementations; `tests/` with a tiny harness and a real integration test.
-- `platform.h` + `src/platform_host.c`: every PS5-only call (notifications, privilege escalation, `statfs`, interface IP, engine launch, RNG) sits behind this one interface so the host build substitutes fakes. **The PS5 implementation lands with the payload build (#1); this issue ships only the host implementation.**
+- `platform.h` + `src/platform_host.c`: every PS5-only call (notifications, privilege escalation, `statfs`, interface IP, firmware version, engine launch, RNG) sits behind this one interface so the host build substitutes fakes. **The PS5 implementation lands with the payload build (#1); this issue ships only the host implementation.**
 - `supervisor.c`: creates `/data/raiju/{downloads,staging,trash,session,www}`, takes the single-instance lock, generates the pairing code, writes `session/aria2.conf` and `session/aria2.secret`, starts the engine and shows the ready notification.
 - `engine_options.c`: renders the aria2 options from the tuning table below (RPC on loopback, session persistence) and persists the secret atomically.
 - `assets.c` + `tools/gen_assets.c`: a build-time tool walks an embed directory (`ui/dist` by default, overridable with `EMBED_DIR`) and emits a `{path, bytes}` table; an absent directory yields an empty table. `www` wins over the embedded table.
-- `proxy.c`: secret injection and a minimal loopback HTTP client; `server.c` adapts CivetWeb and bridges the `/jsonrpc` WebSocket to aria2's.
+- `proxy.c`: secret injection and a minimal loopback HTTP client; `server.c` adapts CivetWeb, bridges the `/jsonrpc` WebSocket to aria2's, and hands the `aria2.onDownloadComplete`/`onDownloadError` notification frames to the gateway.
+- `fetch.c`: the injectable outbound HTTP(S) client for `/api/art` and `/api/probe` (see the fetch seam below).
+- `api.c`, `api_probe.c`, `art.c`: the `/api` worker thread, queue serialisation and handlers, the probe and its zip/7z index readers, and the OrbisPatches/ProsperoPatches artwork parser and cache.
 - `pairing.c` (device store under `session/devices.json`, written atomically), `allowlist.c` (the Security roots), `auth.c`, `http.c` (routing table + request/response helpers), `gateway.c` (routes and handlers).
-- Routing is a table of `raiju_route` handlers with the gateway as their context. Issue #17 adds `/api/storage`, `/api/folders`, `/api/jobs`, `/api/probe`, `/api/art` and `/api/power/keep-awake` by appending routes with `raiju_gateway_add_route` and implementing handlers — no change to the core.
+- Routing is a table of `raiju_route` handlers with the gateway as their context. Issue #17 adds `/api/status`, `/api/storage`, `/api/folders`, `/api/jobs`, `/api/probe` and `/api/art` by appending routes with `raiju_gateway_add_route` and implementing handlers — no change to the core. `/api/power/keep-awake` is #18.
 - CivetWeb is fetched by the Makefile from the pinned `v1.16` release tarball, verified by sha256, into `payload/third_party/civetweb` (gitignored). It is built without TLS.
 
 **Raiju system API (`/api`)**
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/status` | Version, uptime, firmware, IP, engine health |
-| `GET /api/storage` | Total and free bytes of `/data` (via `statfs`) |
-| `GET /api/folders` | Browse download destinations under `/data` (allowlisted roots) |
-| `GET /api/jobs`, `GET /api/jobs/:id` | Pipeline state per download (stage, progress, error) |
-| `POST /api/jobs` | Add a download with pipeline options: destination root, title ID override, keep archive, conflict policy. Wraps `aria2.addUri`. |
-| `POST /api/jobs/:id/{retry,cancel,resolve}` | Retry a failed stage, cancel, or answer a name-conflict prompt |
-| `POST /api/probe` | Before downloading: HEAD + range-read a URL to get size, kind, uncompressed size and a fits/doesn't-fit verdict |
-| `POST /api/power/keep-awake` | Toggle "keep awake while downloading" |
-| `POST /api/pair`, `DELETE /api/devices/:id` | Pairing and device token management |
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `GET /api/status` | public | Version, uptime, firmware, IP, engine health |
+| `GET /api/storage` | token | Total/free bytes of `/data` plus the games and staging figures |
+| `GET /api/folders` | token | Browse download destinations under the allowlisted roots |
+| `GET /api/jobs`, `GET /api/jobs/:id` | token | Pipeline state per download |
+| `POST /api/jobs` | token | Add a download (destination, title ID override, keep archive, conflict policy) |
+| `POST /api/jobs/:id/{retry,cancel,resolve}` | token | Retry a failed stage, cancel, answer a name-conflict prompt |
+| `POST /api/probe` | token | HEAD + range read a URL for size, kind, uncompressed size and a fits verdict |
+| `GET /api/art/:id` | token | Cover art for a title ID from OrbisPatches/ProsperoPatches |
+| `POST /api/power/keep-awake` | token | Toggle keep-awake (#18) |
+| `POST /api/pair`, `DELETE /api/devices/:id` | mixed | Pairing and device token management |
+
+Every endpoint but `GET /api/status` needs a device token (cookie or `Authorization: Bearer`).
+
+**Shapes.**
+
+- `GET /api/status` → `{"name":"raiju","version":"…","uptime":N,"firmware":"…","platform":"ps5"|"host","ip":"…","engine":{"up":bool[,"version":"…"]}}`. Engine health asks aria2 `aria2.getVersion` through the upstream client; a down engine is reported (`"up":false`) without failing the response. The secret, firewall pairing code and tokens never appear.
+- `GET /api/storage` → `{"totalBytes","freeBytes","gamesBytes","stagingBytes"}`. Total and free come from the platform `disk_usage` hook on `<data_dir>`; `gamesBytes` sums the regular files under the install root (`/data/homebrew`) and `stagingBytes` under `<data_dir>/staging`, both walked without following symlinks and recomputed at most every 30 s.
+- `GET /api/folders?path=<dir>` → `{"roots":[{"id","label","path"}],"path":"<resolved>","entries":[{"name","path","directory"}]}`. `roots` are the UI's preset pills (`homebrew`, `etaHEN/games`, `Downloads`); the path defaults to the install root and must resolve inside a Security root, so `..` and symlink escapes are refused (403) and a missing path is 404.
+- `GET /api/jobs` → `{"jobs":[…]}` and `GET /api/jobs/:id` → one job; each job is `{"id","stage","uiStage","status","titleId","sourceName","name","kind","installName","bytesTotal","bytesDone","error"}`. `stage` is the raw processor stage; `uiStage` and `status` use the UI vocabulary (mapping below).
+- `POST /api/jobs` body → `{"id","uri","destination"?,"titleId"?,"fileName"?,"kind"?,"size"?,"uncompressedSize"?,"keepArchive"?,"conflict"?}`. The `id` must be `[A-Za-z0-9_-]{1,64}` and is the aria2 GID (so notifications map back); `destination` must be inside an allowlisted root. The job is added to the processor with the pipeline options and the space check runs, refusing with 409 `{"error":"no_space",…}` when it does not fit; then the URI goes to aria2 through `aria2.addUri` with `{"gid":id,"dir":"<data_dir>/downloads"}` and the secret injected. A 201 returns the created job.
+- `POST /api/jobs/:id/resolve` body → `{"choice":"rename"|"replace"|"cancel"}`.
+- `POST /api/probe` body → `{"uri"}` → `{"size","kind","category","uncompressedSize","uncompressedKnown","estimated","fits","requiredBytes","freeBytes"}`. It HEADs the URL for the size (falling back to a `Range: bytes=0-0` when the server omits Content-Length), classifies the leading bytes with the processor's `classify`, and for a zip or 7z reads the archive index with range requests to sum the uncompressed sizes (`tar.*` stays unknown and is marked `estimated`); the verdict comes from the processor's `space`.
+- `GET /api/art/<TITLE_ID>` → `{"titleId","name","icon","background","logo","source"}` or 404 `{"error":"not_found"}`, both with `Content-Type: application/json` and `Cache-Control: public, max-age=86400`. CUSA titles resolve through OrbisPatches, PPSA through ProsperoPatches; the result is cached for 24h as JSON under `<data_dir>/art/<TITLE_ID>.json`.
+
+**Job stage → UI vocabulary (#19 builds the UI on it).** `stage` is the raw processor stage; `uiStage` and `status` map as:
+
+| Processor stage | `uiStage` | `status` |
+|---|---|---|
+| downloading | download | active |
+| verifying, classifying, awaiting_title_id | verify | active (waiting for awaiting_title_id) |
+| extracting | extract | active |
+| installing, rescan, notifying, conflict | install | active (waiting for conflict) |
+| ready | ready | done |
+| failed | the bucket of `failed_stage` | failed |
+| cancelled | ready | failed |
+
+**Worker-thread ownership.** The processor is not thread safe and its queue is owned by one thread. The gateway starts a single worker thread that owns `raiju_processor`; every request that touches the queue (jobs list/get/create/retry/resolve/cancel) and the worker itself serialise on one mutex. The worker wakes on a signal or a 400 ms tick and each pass applies aria2 notifications, polls aria2 `tellStatus` for jobs still downloading (so a completion is seen even without a websocket client), and runs `raiju_processor_run`, which drives verify → classify → extract → install → rescan → notify. A cancel records the job ID in a small cancel set (its own mutex, read by the extraction progress hook) before it takes the queue mutex, so a cancel can stop a running extraction without waiting on the queue lock. The processor's rescan and notify hooks are supplied by the gateway: rescan POSTs `<SMP>/api/v1/scan` and treats an unreachable ShadowMountPlus as a silent skip, and notify goes through the platform hook, so the host build succeeds without ShadowMountPlus.
+
+**Outbound fetch seam.** `/api/art` and `/api/probe` share one outbound HTTP(S) client (`raiju/fetch.h`) that performs a single GET or HEAD with an optional Range header, a socket timeout and a byte cap, and never follows redirects. It is injectable (`raiju_gateway_config.fetch`): the built-in client speaks plain HTTP and HTTPS through OpenSSL when the build linked it (`-DRAIJU_FETCH_TLS`), and tests pass a fake or point at a local fixture server. The gateway never reaches the internet from a test.
 
 ### 2. Web UI (`ui/`)
 
@@ -265,6 +297,7 @@ Downloading during rest mode itself isn't possible from a payload.
 - File paths from clients are resolved and checked against allowlisted roots (`/data/raiju`, `/data/pkg`, `/data/homebrew`, `/data/etaHEN/games`). This blocks `../` and symlink escapes.
 - Archive entries go through the same checks: no absolute paths, no `..`, no symlinks or hardlinks, so a malicious archive can't write outside staging.
 - LAN only; no port forwarding or UPnP for the gateway port.
+- A client-supplied download URL is fetched both by the probe (`/api/probe`, HEAD plus ranged GETs) and by aria2 itself, so a paired client can make the console request any host it can reach. That is inherent to a downloader and no wider than the engine's own reach; both paths reject anything that is not `http`/`https`, cap the response, time out and refuse a URL that carries a control character or a space.
 
 ## Repository layout
 

@@ -7,11 +7,81 @@
 #include <string.h>
 
 #include "civetweb.h"
+#include "raiju/api.h"
 #include "raiju/auth.h"
 #include "raiju/gateway.h"
 #include "raiju/strbuf.h"
 
 #define RAIJU_WS_BRIDGE_REFS 2
+#define RAIJU_GID_MAX 64
+
+/**
+ * Copies a JSON string value for key from a websocket message body into out.
+ */
+static bool ws_json_field(const char *body, size_t length, const char *key, char *out, size_t capacity) {
+	const char *limit = body + length;
+	char needle[64];
+	int written = snprintf(needle, sizeof needle, "\"%s\":\"", key);
+	if (written < 0 || (size_t)written >= sizeof needle) {
+		return false;
+	}
+	size_t needle_length = strlen(needle);
+	for (const char *cursor = body; cursor + needle_length <= limit; cursor++) {
+		if (memcmp(cursor, needle, needle_length) != 0) {
+			continue;
+		}
+		const char *value = cursor + needle_length;
+		const char *end = value;
+		while (end < limit && *end != '"') {
+			end++;
+		}
+		if (end >= limit) {
+			return false;
+		}
+		size_t value_length = (size_t)(end - value);
+		if (value_length >= capacity) {
+			value_length = capacity - 1;
+		}
+		memcpy(out, value, value_length);
+		out[value_length] = '\0';
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Parses an aria2 notification frame and hands it to the API worker: a
+ * completed or failed download identified by its GID (the job ID).
+ */
+static bool bytes_contain(const char *haystack, size_t haystack_length, const char *needle) {
+	size_t needle_length = strlen(needle);
+	if (needle_length == 0 || haystack_length < needle_length) {
+		return false;
+	}
+	for (size_t i = 0; i + needle_length <= haystack_length; i++) {
+		if (memcmp(haystack + i, needle, needle_length) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void dispatch_notification(raiju_gateway *gateway, const char *data, size_t length) {
+	bool complete = bytes_contain(data, length, "aria2.onDownloadComplete");
+	bool error = !complete && bytes_contain(data, length, "aria2.onDownloadError");
+	if (!complete && !error) {
+		return;
+	}
+	char gid[RAIJU_GID_MAX + 1];
+	if (!ws_json_field(data, length, "gid", gid, sizeof gid)) {
+		return;
+	}
+	if (complete) {
+		raiju_api_engine_complete(gateway, gid);
+	} else {
+		raiju_api_engine_error(gateway, gid, "download_error");
+	}
+}
 
 typedef struct {
 	raiju_gateway *gateway;
@@ -86,6 +156,9 @@ static int ws_client_data(struct mg_connection *conn, int bits, char *data, size
 	pthread_mutex_unlock(&bridge->lock);
 	if (client != NULL && !closed) {
 		mg_websocket_write(client, bits, data, length);
+	}
+	if ((bits & 0x0f) == MG_WEBSOCKET_OPCODE_TEXT) {
+		dispatch_notification(bridge->gateway, data, length);
 	}
 	return 1;
 }

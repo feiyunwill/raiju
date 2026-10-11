@@ -84,6 +84,14 @@ int raiju_job_resolve_conflict(const raiju_pipeline *pipeline, raiju_job *job, r
 int raiju_job_retry(raiju_job *job);
 
 /**
+ * Ends a job as CANCELLED: its staging folder is removed and the download is
+ * kept until the job is discarded. Nothing under an install root is ever
+ * touched. Returns -1 for a job that already reached READY or CANCELLED, or
+ * when the staging folder cannot be removed.
+ */
+int raiju_job_cancel(const raiju_pipeline *pipeline, raiju_job *job);
+
+/**
  * Deletes a job's staging and trash folders and, for unfinished jobs, its
  * download. The install root is never touched. Returns 0 when everything
  * was removed.

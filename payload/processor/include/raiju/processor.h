@@ -96,6 +96,13 @@ raiju_processor_status raiju_processor_resolve(raiju_processor *processor, const
 raiju_processor_status raiju_processor_retry(raiju_processor *processor, const char *id);
 
 /**
+ * Cancels a job: its staging folder is removed, its download is kept until
+ * the job is discarded, and nothing under an install root is touched. A job
+ * that already reached READY or CANCELLED is refused with WRONG_STAGE.
+ */
+raiju_processor_status raiju_processor_cancel(raiju_processor *processor, const char *id);
+
+/**
  * Deletes a job's working files (see raiju_job_discard_files) and removes it
  * from the queue, then persists.
  */

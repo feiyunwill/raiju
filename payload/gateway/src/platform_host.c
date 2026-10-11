@@ -69,6 +69,12 @@ static int host_interface_ip(void *ctx, char *buffer, size_t capacity) {
 	return 0;
 }
 
+static int host_firmware(void *ctx, char *buffer, size_t capacity) {
+	(void)ctx;
+	snprintf(buffer, capacity, "unknown");
+	return 0;
+}
+
 static int host_launch_engine(void *ctx, const char *executable, const char *options_file) {
 	(void)ctx;
 	pid_t pid = fork();
@@ -107,7 +113,8 @@ static int host_random_bytes(void *ctx, void *buffer, size_t length) {
 
 const raiju_platform *raiju_platform_host(void) {
 	static const raiju_platform host = {
-	    host_notify, host_escalate, host_disk_usage, host_interface_ip, host_launch_engine, host_random_bytes, NULL,
+	    host_notify,   host_escalate,     host_disk_usage,    host_interface_ip,
+	    host_firmware, host_launch_engine, host_random_bytes, NULL,
 	};
 	return &host;
 }

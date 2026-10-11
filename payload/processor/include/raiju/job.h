@@ -82,6 +82,9 @@ typedef struct {
 /**
  * What a client asks for when it adds a download. file_name may be empty
  * until the download completes. uncompressed_size is 0 when unknown.
+ * title_id pins the install name from the start (NULL or empty to let the
+ * pipeline read it from param.json or the file name); when set it survives
+ * classification.
  */
 typedef struct {
 	const char *id;
@@ -91,6 +94,7 @@ typedef struct {
 	uint64_t uncompressed_size;
 	bool keep_archive;
 	raiju_conflict_choice conflict_policy;
+	const char *title_id;
 } raiju_job_options;
 
 /**
