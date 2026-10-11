@@ -110,7 +110,7 @@ Rules that prevent corruption:
    - the downloaded size must match the server's `Content-Length`;
    - archives are checked during extraction by their own built-in CRCs (7z and zip store a CRC32 per file; zstd frames usually carry a checksum);
    - images get a structural check (exFAT boot-region checksum, UFS2 superblock sanity);
-   - after install, ShadowMountPlus must mount the image and report the expected title ID.
+   - after install, ShadowMountPlus must recognise the image and register the title. It mounts the image to do that and then releases it again, because mounts are on demand per launch (#7), so what is checked is the registration, not a live mount.
 3. **Check space before downloading.** Archives need space for the archive *and* the extracted files. For `.7z`/`.zip`, Raiju reads the archive's file index (stored at the end of the file) with a small HTTP range request before downloading, and refuses jobs that won't fit.
 4. **Never overwrite silently.** If the target name already exists in `/data/homebrew`, Raiju asks: rename, replace, or cancel.
 5. **Tell ShadowMountPlus.** After installing, Raiju asks ShadowMountPlus (through its local API) to rescan, so the game appears without waiting for its next scan.
