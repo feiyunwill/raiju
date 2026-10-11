@@ -19,12 +19,14 @@ typedef enum {
 typedef enum {
 	RAIJU_TITLE_SOURCE_NONE = 0,
 	RAIJU_TITLE_SOURCE_PARAM_JSON,
-	RAIJU_TITLE_SOURCE_FILE_NAME
+	RAIJU_TITLE_SOURCE_FILE_NAME,
+	RAIJU_TITLE_SOURCE_USER
 } raiju_title_source;
 
 /**
  * The install name chosen for a job. source is NONE when neither param.json
- * nor the file name gave a title ID, and the job must ask the user.
+ * nor the file name gave a title ID, and the job must ask the user; USER
+ * marks an ID the user typed in answer.
  * names_disagree is set when both were found and differ; param.json wins.
  */
 typedef struct {

@@ -17,12 +17,17 @@ TEST_OBJECTS := $(TEST_SOURCES:%.c=$(BUILD)/%.o)
 HEADERS := $(wildcard include/raiju/*.h src/*.h tests/*.h)
 TEST_BINARY := $(BUILD)/raiju-processor-tests
 
-.PHONY: all test clean
+.PHONY: all test sanitize clean
 
 all: $(OBJECTS)
 
 test: $(TEST_BINARY)
 	./$(TEST_BINARY)
+
+SANITIZE_FLAGS := -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+
+sanitize:
+	$(MAKE) BUILD=$(BUILD)/sanitize CFLAGS="-O1 -g $(SANITIZE_FLAGS)" LDFLAGS="$(SANITIZE_FLAGS)" test
 
 $(TEST_BINARY): $(OBJECTS) $(TEST_OBJECTS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)

@@ -8,29 +8,13 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "archive_builder.h"
 #include "fixtures.h"
 #include "raiju/extract.h"
 #include "test.h"
 
 #define PARAM_JSON "{\"titleId\":\"PPSA24003\",\"contentVersion\":\"01.000.000\"}"
 #define PAUSE_FILE_BYTES (512u * 1024u)
-
-typedef enum {
-	FORMAT_ZIP = 0,
-	FORMAT_7Z,
-	FORMAT_TAR_ZSTD,
-	FORMAT_TAR_XZ,
-	FORMAT_TAR_GZ,
-	FORMAT_COUNT
-} fixture_format;
-
-typedef struct {
-	const char *path;
-	unsigned type;
-	const void *data;
-	size_t length;
-	const char *link;
-} fixture_entry;
 
 typedef struct {
 	char *root;
@@ -46,80 +30,6 @@ typedef struct {
 	unsigned answer_after;
 	raiju_extract_control answer;
 } progress_log;
-
-static const char *const format_names[FORMAT_COUNT] = {"zip", "7z", "tar.zst", "tar.xz", "tar.gz"};
-
-/**
- * Configures an archive writer for a fixture format. Returns false when the
- * host libarchive cannot write it natively.
- */
-static bool configure_writer(struct archive *writer, fixture_format format) {
-	switch (format) {
-	case FORMAT_ZIP:
-		return archive_write_set_format_zip(writer) == ARCHIVE_OK;
-	case FORMAT_7Z:
-		return archive_write_set_format_7zip(writer) == ARCHIVE_OK;
-	case FORMAT_TAR_ZSTD:
-		return archive_write_set_format_pax_restricted(writer) == ARCHIVE_OK &&
-		       archive_write_add_filter_zstd(writer) == ARCHIVE_OK;
-	case FORMAT_TAR_XZ:
-		return archive_write_set_format_pax_restricted(writer) == ARCHIVE_OK &&
-		       archive_write_add_filter_xz(writer) == ARCHIVE_OK;
-	case FORMAT_TAR_GZ:
-		return archive_write_set_format_pax_restricted(writer) == ARCHIVE_OK &&
-		       archive_write_add_filter_gzip(writer) == ARCHIVE_OK;
-	case FORMAT_COUNT:
-		break;
-	}
-	return false;
-}
-
-/**
- * Writes a fixture archive with libarchive's write API. Returns 0 on
- * success, 1 when the format is not writable on this host and -1 on error.
- */
-static int write_archive(const char *path, fixture_format format, const fixture_entry *entries, size_t count) {
-	struct archive *writer = archive_write_new();
-	if (writer == NULL) {
-		return -1;
-	}
-	if (!configure_writer(writer, format)) {
-		archive_write_free(writer);
-		return 1;
-	}
-	if (archive_write_open_filename(writer, path) != ARCHIVE_OK) {
-		archive_write_free(writer);
-		return -1;
-	}
-	int status = 0;
-	for (size_t i = 0; i < count && status == 0; i++) {
-		struct archive_entry *entry = archive_entry_new();
-		archive_entry_set_pathname(entry, entries[i].path);
-		archive_entry_set_filetype(entry, entries[i].type);
-		archive_entry_set_perm(entry, entries[i].type == AE_IFDIR ? 0755 : 0644);
-		archive_entry_set_mtime(entry, 1700000000, 0);
-		if (entries[i].type == AE_IFLNK) {
-			archive_entry_set_symlink(entry, entries[i].link);
-		} else if (entries[i].link != NULL) {
-			archive_entry_set_hardlink(entry, entries[i].link);
-		}
-		if (entries[i].type == AE_IFREG) {
-			archive_entry_set_size(entry, (la_int64_t)entries[i].length);
-		}
-		if (archive_write_header(writer, entry) != ARCHIVE_OK) {
-			status = -1;
-		} else if (entries[i].length > 0 &&
-		           archive_write_data(writer, entries[i].data, entries[i].length) != (la_ssize_t)entries[i].length) {
-			status = -1;
-		}
-		archive_entry_free(entry);
-	}
-	if (archive_write_close(writer) != ARCHIVE_OK) {
-		status = -1;
-	}
-	archive_write_free(writer);
-	return status;
-}
 
 /**
  * Creates a temporary root holding an archive path and a staging path that
@@ -151,11 +61,11 @@ static void sandbox_close(sandbox *box) {
  */
 static bool extract_fixture(sandbox *box, fixture_format format, const fixture_entry *entries, size_t count,
                             raiju_extract_result *out) {
-	int written = write_archive(box->archive, format, entries, count);
+	int written = archive_builder_write(box->archive, format, entries, count);
 	CHECK(written >= 0);
 	if (written != 0) {
 		if (written > 0) {
-			printf("    skipped %s: not writable by this libarchive\n", format_names[format]);
+			printf("    skipped %s: not writable by this libarchive\n", archive_format_names[format]);
 		}
 		return false;
 	}
@@ -254,7 +164,7 @@ static void wrapper_folders_are_stripped_in_every_format(void) {
 		raiju_extract_result result;
 		if (extract_fixture(&box, (fixture_format)format, entries, 4, &result)) {
 			if (result.status != RAIJU_EXTRACT_OK) {
-				fprintf(stderr, "    format %s: %s\n", format_names[format], raiju_extract_status_name(result.status));
+				fprintf(stderr, "    format %s: %s\n", archive_format_names[format], raiju_extract_status_name(result.status));
 			}
 			CHECK_INT(result.status, RAIJU_EXTRACT_OK);
 			CHECK_INT(result.layout, RAIJU_LAYOUT_FOLDER_DUMP);
@@ -386,7 +296,7 @@ static void expect_rejected(fixture_format format, const fixture_entry *bad, rai
 	raiju_extract_result result;
 	if (extract_fixture(&box, format, entries, 2, &result)) {
 		if (result.status != expected) {
-			fprintf(stderr, "    %s entry %s: %s\n", format_names[format], bad->path,
+			fprintf(stderr, "    %s entry %s: %s\n", archive_format_names[format], bad->path,
 			        raiju_extract_status_name(result.status));
 		}
 		CHECK_INT(result.status, expected);
@@ -460,7 +370,7 @@ static void progress_reports_bytes_against_the_total(void) {
 	uint64_t expected = sizeof PARAM_JSON - 1 + PAUSE_FILE_BYTES;
 	sandbox box;
 	CHECK(sandbox_open(&box, "dump.zip"));
-	CHECK_INT(write_archive(box.archive, FORMAT_ZIP, entries, 2), 0);
+	CHECK_INT(archive_builder_write(box.archive, FORMAT_ZIP, entries, 2), 0);
 	uint64_t total = 0;
 	CHECK_INT(raiju_archive_total_bytes(box.archive, &total), 0);
 	CHECK_INT(total, expected);
@@ -487,8 +397,8 @@ static void pause_waits_for_the_current_entry_then_resume_restarts(void) {
 	};
 	sandbox box;
 	CHECK(sandbox_open(&box, "dump.tar.zst"));
-	fixture_format format = write_archive(box.archive, FORMAT_TAR_ZSTD, entries, 3) == 0 ? FORMAT_TAR_ZSTD : FORMAT_ZIP;
-	CHECK_INT(write_archive(box.archive, format, entries, 3), 0);
+	fixture_format format = archive_builder_write(box.archive, FORMAT_TAR_ZSTD, entries, 3) == 0 ? FORMAT_TAR_ZSTD : FORMAT_ZIP;
+	CHECK_INT(archive_builder_write(box.archive, format, entries, 3), 0);
 
 	progress_log log = {0, 0, 0, true, 2, RAIJU_EXTRACT_PAUSE};
 	raiju_extract_request request = {box.archive, box.staging, 0, record_progress, &log};
@@ -521,7 +431,7 @@ static void cancel_stops_before_the_first_entry(void) {
 	};
 	sandbox box;
 	CHECK(sandbox_open(&box, "dump.zip"));
-	CHECK_INT(write_archive(box.archive, FORMAT_ZIP, entries, 1), 0);
+	CHECK_INT(archive_builder_write(box.archive, FORMAT_ZIP, entries, 1), 0);
 	progress_log log = {0, 0, 0, true, 0, RAIJU_EXTRACT_CANCEL};
 	raiju_extract_request request = {box.archive, box.staging, 0, record_progress, &log};
 	raiju_extract_result result;

@@ -78,4 +78,14 @@ void run_title_id_tests(void);
  */
 void run_extract_tests(void);
 
+/**
+ * Runs the jobs.json serialisation, validation and atomic save tests.
+ */
+void run_job_store_tests(void);
+
+/**
+ * Runs the job state machine, crash-resume, conflict and space tests.
+ */
+void run_pipeline_tests(void);
+
 #endif

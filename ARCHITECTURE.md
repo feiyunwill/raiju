@@ -37,7 +37,7 @@ Single ELF, sent through the existing ELF loader (port 9021).
 
 **Supervisor**
 - Gains the elevated privileges (credentials, sandbox escape) needed for full filesystem access. This follows the same pattern as `ps5-payload-dev/ftpsrv`.
-- Creates `/data/raiju/{downloads,staging,session,www}` on first run.
+- Creates `/data/raiju/{downloads,staging,trash,session,www}` on first run.
 - Starts the engine and gateway, and shows a PS5 notification: `Raiju ready — http://<ip>:8080 · code 4821`.
 - Single-instance guard: if Raiju is already running, the new copy exits and re-shows the notification.
 
@@ -51,7 +51,7 @@ Single ELF, sent through the existing ELF loader (port 9021).
 
 **Processor (post-download pipeline)**
 
-Runs in its own worker thread. When aria2 reports a download complete (`onDownloadComplete`), the processor picks up that job. Each job is a small state machine, persisted to `/data/raiju/session/jobs.json`. On startup it resumes from the last completed stage.
+Runs in its own worker thread. When aria2 reports a download complete (`onDownloadComplete`), the payload passes the processor a "download complete" event with the file (or folder) path and the size the server announced; the processor picks up that job. Each job is a small state machine, persisted to `/data/raiju/session/jobs.json`. On startup it resumes from the last completed stage.
 
 ```mermaid
 stateDiagram-v2
@@ -62,19 +62,36 @@ stateDiagram-v2
     Classifying --> Installing: image
     Classifying --> Extracting: archive
     Classifying --> Installing: other
+    Classifying --> AwaitingTitleId: no title ID
     Extracting --> Installing
+    Extracting --> AwaitingTitleId: no title ID
+    AwaitingTitleId --> Installing: user enters ID
+    Installing --> Conflict: name taken
+    Conflict --> Installing: rename / replace
+    Conflict --> Cancelled: cancel
+    Extracting --> Cancelled: cancel
     Installing --> Rescan
     Rescan --> Notifying
     Notifying --> Ready
     Ready --> [*]
     Downloading --> Failed
     Verifying --> Failed
+    Classifying --> Failed
     Extracting --> Failed
     Installing --> Failed
     Rescan --> Failed
+    Notifying --> Failed
     Failed --> Downloading: retry
-    note right of Failed: keeps files; retry or discard
+    note right of Failed: keeps files; retry returns to the failed stage (Downloading after a download or verify failure), or discard
 ```
+
+The code lives in `payload/processor`: `job.h` (the job model), `job_store.h` (jobs.json), `pipeline.h` (one stage at a time), `processor.h` (the queue and its events) and `space.h`.
+
+- **Stage semantics.** A job's `stage` is the next stage to run, and it only advances once that stage's work is done, so after a crash the stage that was running simply runs again. Every stage is safe to rerun: extraction wipes `staging/<job-id>/` first, and the install step recognises a move that already happened (see step 4).
+- **jobs.json.** `{"version":1,"jobs":[…]}` with one flat object per job: stage, failed stage and error, download path and original name, expected and uncompressed sizes, install root, keep-archive flag, conflict policy, kind, payload type and path, title ID and its source, committed install path, conflict choice, and extraction progress. It is rewritten after every stage: written to `jobs.json.tmp`, fsynced, renamed over `jobs.json`, then the directory is fsynced, so a crash leaves the old or the new file, never a mix. On load the file is untrusted: it is capped at 4 MiB and 512 jobs, parsed by a strict JSON reader (nesting capped, escapes validated, no NUL in strings), job IDs must match `[A-Za-z0-9_-]{1,64}` because they name the staging and trash folders, paths must be absolute without `.`/`..` components, every enum value must be known, IDs unique, and each job must carry the fields its stage needs. Unknown keys are skipped. A file that fails these checks is renamed to `jobs.json.bad` and the queue starts empty; files on disk are left alone. Before moving anything, the install step also checks that the payload lies inside the job's own download or staging folder.
+- **Hooks.** Rescan (step 5) and the "ready" notification are function pointers supplied by the payload, so ShadowMountPlus and PS5 notifications plug in without the pipeline knowing about them; host tests use fakes. Either hook failing fails the job at that stage, and retry runs it again.
+- **Retry and discard.** Retry sends a failed job back to the stage it failed in, except download and verify failures, which go back to Downloading because the bytes on disk are wrong. Discard deletes the job's staging and trash folders and, unless the job already installed, its download. Nothing under an install root is ever deleted by discard.
+- **Cancel.** Cancelling during extraction or at a conflict ends the job as Cancelled: its staging folder is removed and the download is kept until it is discarded.
 
 1. **Verify.** Final size equals `Content-Length`. No checksum is expected; integrity comes from archive CRCs during extraction (step 3), the image's structural checks (step 2b), and the confirmed mount (step 6).
 2. **Classify.** Look at the file's first bytes (magic), not just the extension:
@@ -102,15 +119,16 @@ stateDiagram-v2
    - Every entry path is normalized and rejected if absolute or containing `..` or a backslash. Symlinks, hardlinks and special files inside archives are refused. Any rejected entry fails the job; nothing is silently skipped. libarchive's `SECURE_SYMLINKS` and `SECURE_NODOTDOT` flags are set as a second line of defence.
    - Large write buffers (1 MiB) and no per-file fsync during extraction; one `fsync` pass over the result happens before install.
    - Layout normalization: a folder dump must have `sce_sys/` at its root. If the archive wraps it in extra folders (`Game/Game/sce_sys`), Raiju strips them by installing the innermost folder; `__MACOSX/` and `.DS_Store` don't count as content. Otherwise, if the archive contains exactly one SMP image (`.ffpkg`, `.exfat`, `.ffpfs`, `.ffpfsc`) that passes the step 2 checks, that image becomes the install payload. Several images, or neither a dump nor an image, fail the job.
-   - Progress is reported as bytes extracted out of the total, read from the archive index.
+   - Progress is reported as bytes extracted out of the total, read from the archive index by the probe when the job is added (unknown for tar.*) and stored with the job.
    - Pause and cancel are honoured between entries. Resuming restarts the archive from the beginning, because libarchive can't resume mid-stream; the staging folder is wiped first. Extraction refuses a non-empty staging folder, so a resume can't mix two runs.
 4. **Install.** `rename()` from staging (or from downloads, for images) to the destination. It's atomic because `/data/raiju` and `/data/homebrew` are on the same filesystem.
-   - Destination defaults: images go to `/data/homebrew/<TITLE_ID>.<ext>` (extension in lowercase, e.g. `PPSA24003.exfat`), folder dumps to `/data/homebrew/<TITLE_ID>/`. The root is configurable, e.g. `/data/etaHEN/games`.
-   - If the name already exists, the job waits for the user to choose rename, replace or cancel. "Replace" renames the old copy to a trash folder first, then deletes it after the swap.
+   - Destination defaults: images go to `/data/homebrew/<TITLE_ID>.<ext>` (extension in lowercase, e.g. `PPSA24003.exfat`), folder dumps to `/data/homebrew/<TITLE_ID>/`. The root is configurable, e.g. `/data/etaHEN/games`. The extension is the image's own when it has one (`Game.EXFAT` → `.exfat`), otherwise the one its magic bytes imply (`exfat`, `ffpkg`). Other files keep their original name in the chosen folder.
+   - Installing takes two persisted steps. First the destination is decided and saved as the job's install path; only then does the second step `fsync` the payload (one pass over every file and folder, replacing per-file fsync during extraction) and rename it. A rerun after a crash that finds the payload gone and the destination present treats the move as done.
+   - If the name already exists, the job waits in Conflict for the user to choose rename, replace or cancel; a job can also carry a preset policy (rename or replace) that answers without asking. "Rename" installs under the first free `<name>-<n>` from `-2` (`PPSA24003-2.exfat`, `PPSA24003-2/`, `homebrew-2.elf`). "Replace" first renames the old copy to `/data/raiju/trash/<job-id>/`, outside any scanned folder, then renames the new copy into place and deletes the trash folder; a crash at any point resumes the swap, and the install root always holds either the old or the new copy. The free-name check and the rename are not one atomic operation; that is safe because Raiju is the only writer in the install root.
 5. **Rescan and confirm.** `POST http://127.0.0.1:10101/api/v1/scan` with `{}`, then poll `/api/v1/images` / `/api/v1/games` until the new image is mounted and reports the expected title ID. This is the final integrity check. A mount failure is surfaced in the UI with ShadowMountPlus's error. Skipped silently if ShadowMountPlus isn't running. Its API listens on loopback by default, so no SMP configuration is needed.
-6. **Clean up.** Delete the archive (the default, toggleable) and the staging folder.
+6. **Clean up.** Runs at the start of Notifying, before the "ready" notification: delete the staging folder and, unless keep-archive is set, the archive (or what is left of a downloaded folder once the dump was moved out of it). Images and other files were moved into place, so there is nothing left to delete.
 
-Space accounting. Before download: `archive_size + uncompressed_size + 1 GiB margin ≤ free(/data)`. For 7z/zip the uncompressed size comes from the file index at the end of the archive, read with an HTTP range request. For tar.* it's unknown up front, so Raiju warns and estimates 1× the archive size.
+Space accounting. Before download: `archive_size + uncompressed_size + 1 GiB margin ≤ free(/data)`, where free space is `f_bavail × f_frsize` from `statvfs` (injectable for tests). Images and other files count only their own size plus the margin. Adding a job with a known size runs this check and refuses the job when it doesn't fit; when free space can't be read the job is allowed. For 7z/zip the uncompressed size comes from the file index at the end of the archive, read with an HTTP range request. For tar.* it's unknown up front, so Raiju warns and estimates 1× the archive size.
 
 Libraries: libarchive (BSD), built with zstd, xz/lzma, zlib and bzip2. If benchmarks show 7z LZMA2 is the bottleneck, add 7-Zip's C decoder (`LzmaDec`/`Lzma2DecMt`, public domain), which can decode LZMA2 on multiple threads when the archive was created with multiple blocks.
 
@@ -241,7 +259,7 @@ Downloading during rest mode itself isn't possible from a payload.
 raiju/
 ├─ payload/          # raiju.elf: supervisor, gateway, processor, API
 │  ├─ src/
-│  ├─ processor/     # portable C11 pipeline stages; `make -C payload/processor test` runs host unit tests (needs libarchive and pkg-config)
+│  ├─ processor/     # portable C11 pipeline stages; `make -C payload/processor test` runs host unit tests (needs libarchive and pkg-config), `make -C payload/processor sanitize` runs them under ASan and UBSan
 │  ├─ third_party/   # aria2 (fork), libarchive, openssl, zlib, zstd, xz, c-ares, civetweb
 │  └─ Makefile
 ├─ ui/               # Vite + React + shadcn SPA (shared by all clients)
