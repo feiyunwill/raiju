@@ -96,4 +96,12 @@ bool raiju_ufs2_superblock_at(const uint8_t *bytes, size_t len, uint32_t offset)
  */
 uint32_t raiju_find_ufs2_superblock(const uint8_t *head, size_t head_len);
 
+/**
+ * Why ShadowMountPlus cannot mount this image kind on the console, or NULL when it
+ * can. A .ffpkg is a UFS2 image and firmware 13.60 refuses to mount one (#49), so a
+ * probe reports it as unusable rather than installable; the other three image kinds
+ * mount.
+ */
+const char *raiju_image_unsupported_reason(raiju_kind kind);
+
 #endif

@@ -173,6 +173,14 @@ static void ufs2_search_respects_buffer_length(void) {
 	free(image);
 }
 
+static void ffpkg_is_reported_as_unsupported(void) {
+	CHECK(raiju_image_unsupported_reason(RAIJU_KIND_UFS2) != NULL);
+	CHECK(raiju_image_unsupported_reason(RAIJU_KIND_EXFAT) == NULL);
+	CHECK(raiju_image_unsupported_reason(RAIJU_KIND_PFS) == NULL);
+	CHECK(raiju_image_unsupported_reason(RAIJU_KIND_PFSC) == NULL);
+	CHECK(raiju_image_unsupported_reason(RAIJU_KIND_7Z) == NULL);
+}
+
 void run_classify_tests(void) {
 	RUN_TEST(ufs2_superblock_is_found_at_every_freebsd_location);
 	RUN_TEST(ufs2_backup_copy_points_to_primary);
@@ -190,4 +198,5 @@ void run_classify_tests(void) {
 	RUN_TEST(unrecognised_files_are_other);
 	RUN_TEST(extensions_map_to_image_kinds);
 	RUN_TEST(kind_names_are_stable);
+	RUN_TEST(ffpkg_is_reported_as_unsupported);
 }

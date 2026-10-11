@@ -85,7 +85,8 @@ flowchart LR
 
 | What you download | What Raiju does | Ends up in |
 |---|---|---|
-| ShadowMountPlus image: `.ffpkg`, `.exfat`, `.ffpfs`, `.ffpfsc` | Checks the image header, then moves the file into place. **No extraction.** | `/data/homebrew/<TITLE_ID>.<ext>` |
+| ShadowMountPlus image: `.exfat`, `.ffpfs`, `.ffpfsc` | Checks the image header, then moves the file into place. **No extraction.** | `/data/homebrew/<TITLE_ID>.<ext>` |
+| `.ffpkg` (a UFS2 image) | Checks the image header and moves the file into place, but reports the format as unusable rather than installable: ShadowMountPlus does not mount a `.ffpkg` on firmware 13.60 yet (#49), so the game will not appear. Host an `.exfat` dump instead. | — |
 | Archive containing an image, e.g. `PPSA24003-some-game-name.7z` | Extracts the image, checks its header, moves it into place | `/data/homebrew/<TITLE_ID>.<ext>`, e.g. `PPSA24003.exfat` |
 | Archive containing a folder dump (has `sce_sys/`) | Extracts it, removes extra top-level folders so `sce_sys/` is at the game folder's root, moves it into place | `/data/homebrew/<TITLE_ID>/` |
 | Anything else (`.pkg`, media, homebrew `.elf`) | Moves it to the folder you picked | The chosen folder |
@@ -116,7 +117,7 @@ Rules that prevent corruption:
 5. **Tell ShadowMountPlus.** After installing, Raiju asks ShadowMountPlus (through its local API) to rescan, so the game appears without waiting for its next scan.
 
 **Hosting advice for the fastest end-to-end time:**
-- Prefer hosting `.ffpkg` images directly. Download done = game ready.
+- Prefer hosting `.exfat` images directly. Download done = game ready, and unlike `.ffpkg` it mounts on 13.60 today.
 - If you want a smaller download, `.ffpfsc` is compressed but mounts without extraction. The cost is in-game read speed of about 150–250 MB/s, according to ShadowMountPlus.
 - If you must use archives, use `tar.zst` or 7z with zstd/store. Classic 7z LZMA extracts at roughly 50–150 MB/s on one PS5 core, which can double the total time.
 
@@ -140,7 +141,7 @@ See [ARCHITECTURE.md § Power states](ARCHITECTURE.md#power-states) for the tech
 ## Success metrics
 
 - Single large HTTPS file from a fast CDN on wired gigabit: **≥ 100 MB/s sustained**.
-- `.ffpkg` dump: playable within 30 s of the download finishing.
+- `.exfat` dump: playable within 30 s of the download finishing.
 - Zero partially-written files ever visible in `/data/homebrew`, including when the payload is killed mid-job.
 - 100 % of in-progress tasks recover after a payload restart.
 - Add-to-downloading in under 5 seconds from a phone.

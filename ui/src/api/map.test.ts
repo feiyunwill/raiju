@@ -151,6 +151,7 @@ describe("probeSummary", () => {
 		uncompressedKnown: true,
 		estimated: false,
 		fits: true,
+		supported: true,
 		requiredBytes: 80_000_000_000,
 		freeBytes: 612_000_000_000,
 	};
@@ -174,6 +175,18 @@ describe("probeSummary", () => {
 			freeBytes: 20_000_000_000,
 		});
 		expect(summary.verdict).toBe("needs 80.0 GB more");
+		expect(summary.destructive).toBe(true);
+	});
+
+	test("says when the console cannot mount the format at all", () => {
+		const summary = probeSummary({
+			...verdict,
+			supported: false,
+			unsupportedReason: "ShadowMountPlus does not mount .ffpkg images yet",
+		});
+		expect(summary.verdict).toBe(
+			"ShadowMountPlus does not mount .ffpkg images yet",
+		);
 		expect(summary.destructive).toBe(true);
 	});
 

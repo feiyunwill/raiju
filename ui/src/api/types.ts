@@ -107,6 +107,8 @@ export type ApiProbe = {
 	uncompressedKnown: boolean;
 	estimated: boolean;
 	fits: boolean;
+	supported: boolean;
+	unsupportedReason?: string;
 	requiredBytes: number;
 	freeBytes: number;
 };

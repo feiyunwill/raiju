@@ -182,3 +182,10 @@ raiju_classification raiju_classify(const uint8_t *head, size_t head_len, const 
 	result.category = raiju_kind_category(detected);
 	return result;
 }
+
+const char *raiju_image_unsupported_reason(raiju_kind kind) {
+	if (kind == RAIJU_KIND_UFS2) {
+		return "ShadowMountPlus does not mount .ffpkg images yet";
+	}
+	return NULL;
+}

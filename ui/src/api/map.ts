@@ -156,6 +156,7 @@ export function apiJobToJob(job: ApiJob, live: LiveFigures = {}): Job {
 /** Turns a probe verdict into the parts of the Add-download row, e.g. `fits (612 GB free)`. */
 export function probeSummary(probe: ApiProbe): ProbeVerdict {
 	const estimated = probe.estimated ? " (estimated)" : "";
+	const unsupported = !probe.supported;
 	return {
 		badge: kindBadge(probe.kind),
 		size: formatBytes(probe.size),
@@ -163,10 +164,12 @@ export function probeSummary(probe: ApiProbe): ProbeVerdict {
 			? `→ ${formatBytes(probe.uncompressedSize)}`
 			: "→ size unknown",
 		required: `needs ${formatBytes(probe.requiredBytes)}${estimated}`,
-		verdict: probe.fits
-			? `fits (${formatBytes(probe.freeBytes)} free)`
-			: `needs ${formatBytes(Math.max(0, probe.requiredBytes - probe.freeBytes))} more`,
-		destructive: !probe.fits,
+		verdict: unsupported
+			? (probe.unsupportedReason ?? "the console cannot mount this format")
+			: probe.fits
+				? `fits (${formatBytes(probe.freeBytes)} free)`
+				: `needs ${formatBytes(Math.max(0, probe.requiredBytes - probe.freeBytes))} more`,
+		destructive: unsupported || !probe.fits,
 		category: probe.category,
 	};
 }

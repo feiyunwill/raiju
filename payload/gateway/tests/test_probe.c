@@ -232,6 +232,8 @@ static void probes_a_zip_and_a_sevenz(void) {
 	CHECK(raiju_fixture_server_add_file(server, "/game.7z", sevenz, sevenz_size));
 	static const char text[] = "just some text, not an archive";
 	CHECK(raiju_fixture_server_add_file(server, "/notes.txt", text, sizeof text - 1));
+	static const char not_an_image[] = "a file named like a UFS2 image";
+	CHECK(raiju_fixture_server_add_file(server, "/game.ffpkg", not_an_image, sizeof not_an_image - 1));
 
 	raiju_fake_platform fake;
 	char directory[1024];
@@ -251,6 +253,7 @@ static void probes_a_zip_and_a_sevenz(void) {
 	snprintf(expected, sizeof expected, "\"uncompressedSize\":%zu", sizeof payload - 1);
 	CHECK(strstr(body, expected) != NULL);
 	CHECK(strstr(body, "\"fits\":true") != NULL);
+	CHECK(strstr(body, "\"supported\":true") != NULL);
 	CHECK(strstr(raiju_fixture_server_last_range(server), "bytes=") != NULL);
 
 	snprintf(uri, sizeof uri, "http://127.0.0.1:%u/game.7z", raiju_fixture_server_port(server));
@@ -258,6 +261,13 @@ static void probes_a_zip_and_a_sevenz(void) {
 	CHECK(strstr(body, "\"kind\":\"7z\"") != NULL);
 	CHECK(strstr(body, "\"uncompressedSize\":100") != NULL);
 	CHECK(strstr(body, "\"uncompressedKnown\":true") != NULL);
+
+	snprintf(uri, sizeof uri, "http://127.0.0.1:%u/game.ffpkg", raiju_fixture_server_port(server));
+	CHECK_INT(probe(gateway, cookie, uri, body, sizeof body), 200);
+	CHECK(strstr(body, "\"kind\":\"ufs2\"") != NULL);
+	CHECK(strstr(body, "\"category\":\"image\"") != NULL);
+	CHECK(strstr(body, "\"supported\":false") != NULL);
+	CHECK(strstr(body, "\"unsupportedReason\":\"") != NULL);
 
 	snprintf(uri, sizeof uri, "http://127.0.0.1:%u/notes.txt", raiju_fixture_server_port(server));
 	CHECK_INT(probe(gateway, cookie, uri, body, sizeof body), 200);

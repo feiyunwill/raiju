@@ -609,6 +609,7 @@ static int probe_run(const raiju_http_request *request, raiju_http_response *res
 	raiju_space_need need = raiju_space_needed(classification.category, size, uncompressed);
 	raiju_space_report space = raiju_space_check(need, gateway->install_root, probe_free_space, api);
 	bool fits = space.status != RAIJU_SPACE_NOT_ENOUGH;
+	const char *unsupported = raiju_image_unsupported_reason(classification.kind);
 	const char *category = classification.category == RAIJU_CATEGORY_ARCHIVE ? "archive"
 	                       : classification.category == RAIJU_CATEGORY_IMAGE ? "image"
 	                                                                        : "other";
@@ -628,6 +629,12 @@ static int probe_run(const raiju_http_request *request, raiju_http_response *res
 	raiju_strbuf_append(&document, space.estimated ? "true" : "false");
 	raiju_strbuf_append(&document, ",\"fits\":");
 	raiju_strbuf_append(&document, fits ? "true" : "false");
+	raiju_strbuf_append(&document, ",\"supported\":");
+	raiju_strbuf_append(&document, unsupported == NULL ? "true" : "false");
+	if (unsupported != NULL) {
+		raiju_strbuf_append(&document, ",\"unsupportedReason\":");
+		raiju_strbuf_append_json_string(&document, unsupported);
+	}
 	raiju_strbuf_append(&document, ",\"requiredBytes\":");
 	raiju_strbuf_append_uint(&document, (unsigned long long)space.required_bytes);
 	raiju_strbuf_append(&document, ",\"freeBytes\":");
