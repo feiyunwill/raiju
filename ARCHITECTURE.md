@@ -36,10 +36,11 @@ Data path for a download: **Internet → PS5 NIC → aria2 → NVMe → (extract
 Single ELF, sent through the existing ELF loader (port 9021).
 
 **Supervisor**
-- Gains the elevated privileges (credentials, sandbox escape) needed for full filesystem access. This follows the same pattern as `ps5-payload-dev/ftpsrv`.
+- Escalation is belt and braces, not a prerequisite. Measured on firmware 13600007 (#2): the loader starts a payload with `euid 0` and no jail (`jaildir 0`), and `mkdir /data/raiju` succeeds before any escalation runs. The payload still takes the `ps5-payload-dev/ftpsrv` route — `authid 0x4800000000010003`, all 16 capability bytes, `uid`/`ruid`/`svuid`/`rgid`/`svgid` 0, and the jail of a system process (`SceSysCore`) — so it doesn't depend on one loader's good behaviour.
 - Creates `/data/raiju/{downloads,staging,trash,session,www}` on first run.
 - Starts the engine and gateway, and shows a PS5 notification: `Raiju ready — http://<ip>:8080 · code 4821`.
-- Single-instance guard: if Raiju is already running, the new copy exits and re-shows the notification.
+- Single-instance guard: if Raiju is already running, the new copy exits and re-shows the notification. An `flock` on `/data/raiju/session/raiju.lock` answers that, and the second launch is refused with `EWOULDBLOCK` (#2).
+- Ends through `payload_exit()`. Returning from `main` hands the hijacked process back to its C++ teardown, which dies with an uncaught `system_error` a few milliseconds later (#2).
 
 **Engine: aria2**
 - Preferred: `motrixapp/aria2` (Motrix's fork: 64 connections per server, SQLite session persistence). Fallback: upstream aria2 1.37+.
