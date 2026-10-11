@@ -58,5 +58,17 @@ jobs:
           persist-credentials: false
       - run: make -C payload/processor test
 
+  ui-tests:
+    name: UI tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - run: sudo apt-get update && sudo apt-get install -y aria2
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd ui test
+
   build:
     uses: ./.github/workflows/build.yml
