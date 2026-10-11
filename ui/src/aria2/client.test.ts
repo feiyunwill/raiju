@@ -1,4 +1,12 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+	afterAll,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	setDefaultTimeout,
+	test,
+} from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,11 +15,15 @@ import { Aria2Client } from "./client";
 import { type Aria2Snapshot, syncAria2 } from "./sync";
 import { type Aria2Event, type Aria2Gid, Aria2RpcError } from "./types";
 
+const aria2CallTimeoutMs = 20_000;
+const aria2TestTimeoutMs = 90_000;
 const secret = "raiju-test-secret";
+
+setDefaultTimeout(aria2TestTimeoutMs);
 const smallFile = new Uint8Array(256 * 1024).map((_, i) => i % 251);
 const slowFileSize = 64 * 1024 * 1024;
 
-let aria2: Subprocess;
+let aria2: Subprocess | undefined;
 let server: ReturnType<typeof Bun.serve>;
 let client: Aria2Client;
 let downloadDir: string;
@@ -44,7 +56,7 @@ function slowStream(size: number): ReadableStream<Uint8Array> {
 
 async function waitFor<T>(
 	check: () => T | undefined | Promise<T | undefined>,
-	timeoutMs = 10_000,
+	timeoutMs = aria2CallTimeoutMs,
 ): Promise<T> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
@@ -61,6 +73,82 @@ function sawEvent(gid: Aria2Gid, event: Aria2Event): true | undefined {
 	return events.some((item) => item.gid === gid && item.event === event)
 		? true
 		: undefined;
+}
+
+function spawnAria2(): Subprocess {
+	return Bun.spawn(
+		[
+			"aria2c",
+			"--enable-rpc",
+			`--rpc-listen-port=${rpcPort}`,
+			`--rpc-secret=${secret}`,
+			`--dir=${downloadDir}`,
+			"--no-conf",
+			"--quiet",
+			"--split=1",
+			"--max-connection-per-server=1",
+			"--file-allocation=none",
+			"--enable-dht=false",
+			"--bt-enable-lpd=false",
+			"--enable-peer-exchange=false",
+		],
+		{ stdout: "ignore", stderr: "inherit" },
+	);
+}
+
+async function connectClient(): Promise<void> {
+	client = new Aria2Client({
+		url: `http://127.0.0.1:${rpcPort}/jsonrpc`,
+		secret,
+		reconnect: false,
+		timeoutMs: aria2CallTimeoutMs,
+	});
+	await waitFor(async () => {
+		try {
+			await client.connect();
+			return true;
+		} catch {
+			return undefined;
+		}
+	});
+	client.onEvent((gid, event) => events.push({ gid, event }));
+}
+
+/**
+ * Brings the engine back when a test that timed out left it dead or
+ * unreachable, so one failure cannot take the rest of the file with it.
+ */
+async function ensureEngine(): Promise<void> {
+	if (aria2 !== undefined && aria2.exitCode === null) {
+		try {
+			await client.getVersion();
+			return;
+		} catch {
+			client.close();
+		}
+	}
+	aria2 = spawnAria2();
+	await connectClient();
+}
+
+/**
+ * Drops whatever a previous test left behind: a test that timed out
+ * mid-download would otherwise have the next one reading its state.
+ */
+async function purgeDownloads(): Promise<void> {
+	try {
+		for (const item of await client.tellActive(["gid"])) {
+			await client.remove(item.gid, true);
+		}
+		for (const item of await client.tellWaiting(0, 100, ["gid"])) {
+			await client.remove(item.gid, true);
+		}
+		for (const item of await client.tellStopped(0, 100, ["gid"])) {
+			await client.removeDownloadResult(item.gid);
+		}
+	} catch {
+		return;
+	}
 }
 
 beforeAll(async () => {
@@ -86,38 +174,14 @@ beforeAll(async () => {
 	});
 	downloadDir = mkdtempSync(join(tmpdir(), "raiju-aria2-"));
 	rpcPort = freePort();
-	aria2 = Bun.spawn(
-		[
-			"aria2c",
-			"--enable-rpc",
-			`--rpc-listen-port=${rpcPort}`,
-			`--rpc-secret=${secret}`,
-			`--dir=${downloadDir}`,
-			"--no-conf",
-			"--quiet",
-			"--split=1",
-			"--max-connection-per-server=1",
-			"--file-allocation=none",
-			"--enable-dht=false",
-			"--bt-enable-lpd=false",
-			"--enable-peer-exchange=false",
-		],
-		{ stdout: "ignore", stderr: "inherit" },
-	);
-	client = new Aria2Client({
-		url: `http://127.0.0.1:${rpcPort}/jsonrpc`,
-		secret,
-		reconnect: false,
-	});
-	await waitFor(async () => {
-		try {
-			await client.connect();
-			return true;
-		} catch {
-			return undefined;
-		}
-	});
-	client.onEvent((gid, event) => events.push({ gid, event }));
+	aria2 = spawnAria2();
+	await connectClient();
+});
+
+beforeEach(async () => {
+	events.length = 0;
+	await ensureEngine();
+	await purgeDownloads();
 });
 
 afterAll(() => {
