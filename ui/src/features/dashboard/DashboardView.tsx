@@ -1,5 +1,6 @@
 import type { Dashboard, DashboardActions } from "@/data/types";
 import { formatDuration } from "@/lib/format";
+import { jobHasConflict, jobNeedsTitleId } from "./jobText";
 import { NowDownloading } from "./NowDownloading";
 import { QueueList } from "./QueueList";
 import { StorageCard } from "./StorageCard";
@@ -23,6 +24,8 @@ export function DashboardView({
 }: DashboardViewProps) {
 	const current =
 		dashboard.jobs.find((job) => job.status === "active") ??
+		dashboard.jobs.find(jobHasConflict) ??
+		dashboard.jobs.find(jobNeedsTitleId) ??
 		dashboard.jobs.find((job) => job.status === "paused");
 	const incoming = dashboard.jobs
 		.filter(
@@ -53,11 +56,7 @@ export function DashboardView({
 					{uptimeSeconds !== null && ` · up ${formatDuration(uptimeSeconds)}`}
 				</p>
 			</div>
-			<NowDownloading
-				job={current}
-				onTogglePause={actions.togglePause}
-				onAdd={onAdd}
-			/>
+			<NowDownloading job={current} actions={actions} onAdd={onAdd} />
 			<div className="grid gap-6 lg:grid-cols-3">
 				<div className="lg:col-span-2">
 					<ThroughputCard dashboard={dashboard} />

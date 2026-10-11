@@ -309,6 +309,11 @@ export class Aria2Client {
 		return this.call("aria2.getOption", [gid]);
 	}
 
+	/** Global options in effect, such as speed limits, concurrency and file allocation. */
+	getGlobalOption(): Promise<Aria2Options> {
+		return this.call("aria2.getGlobalOption");
+	}
+
 	/** BitTorrent peers of one download. */
 	getPeers(gid: Aria2Gid): Promise<Aria2Peer[]> {
 		return this.call("aria2.getPeers", [gid]);

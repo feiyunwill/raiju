@@ -95,6 +95,38 @@ export function createMockDashboard(): Dashboard {
 			error:
 				"Image header is not UFS2. The server may have sent an error page.",
 		},
+		{
+			id: "f6",
+			titleId: "PPSA01340",
+			name: "Gran Turismo 7",
+			sourceName: "gran-turismo-7-PPSA01340.ffpkg",
+			kind: "image",
+			format: "ffpkg",
+			installName: "PPSA01340.ffpkg",
+			stage: "install",
+			status: "waiting",
+			totalBytes: 96.2 * GB,
+			stageBytes: 96.2 * GB,
+			stageDoneBytes: 96.2 * GB,
+			speed: 0,
+			connections: 0,
+		},
+		{
+			id: "g7",
+			titleId: "UNKNOWN",
+			name: "Ridge Racer",
+			sourceName: "ridge-racer-dump.7z",
+			kind: "archive",
+			format: "7z",
+			installName: "UNKNOWN.exfat",
+			stage: "verify",
+			status: "waiting",
+			totalBytes: 12.4 * GB,
+			stageBytes: 12.4 * GB,
+			stageDoneBytes: 12.4 * GB,
+			speed: 0,
+			connections: 0,
+		},
 	];
 	const speedHistory = Array.from(
 		{ length: 60 },
@@ -106,15 +138,24 @@ export function createMockDashboard(): Dashboard {
 		speedHistory,
 		storage: {
 			totalBytes: 825 * GB,
+			freeBytes: 309.8 * GB,
 			gamesBytes: 486 * GB,
 			stagingBytes: 29.2 * GB,
 		},
 		console: {
 			host: "192.168.1.50",
 			online: true,
-			version: "0.1.0",
+			version: "raiju 0.1.0",
+			engine: "aria2 1.37.0",
+			firmware: "9.60",
 			uptimeSeconds: 3 * 3600 + 12 * 60,
 		},
+		connection: "online",
+		folders: [
+			{ id: "homebrew", label: "homebrew", path: "/data/homebrew" },
+			{ id: "etahen", label: "etaHEN/games", path: "/data/etahen/games" },
+			{ id: "downloads", label: "Downloads", path: "/data/raiju/downloads" },
+		],
 		notice: null,
 	};
 }
@@ -157,14 +198,20 @@ function advance(job: Job): Job {
 	return stageDoneBytes >= job.stageBytes ? nextStage(updated) : updated;
 }
 
-/** Advances the demo by one second: active jobs progress and the next waiting job starts when none is active. */
+/**
+ * Advances the demo by one second: active jobs progress and the next queued download starts when none
+ * is active. Jobs waiting on a name conflict or a title ID stay put, because only the download stage
+ * is fed by the queue.
+ */
 export function tickMockDashboard(state: Dashboard): Dashboard {
 	let jobs = state.jobs.map(advance);
 	if (!jobs.some((job) => job.status === "active")) {
-		const waiting = jobs.findIndex((job) => job.status === "waiting");
-		if (waiting >= 0) {
+		const queued = jobs.findIndex(
+			(job) => job.status === "waiting" && job.stage === "download",
+		);
+		if (queued >= 0) {
 			jobs = jobs.map((job, i) =>
-				i === waiting ? { ...job, status: "active" } : job,
+				i === queued ? { ...job, status: "active" } : job,
 			);
 		}
 	}
@@ -181,6 +228,7 @@ export function tickMockDashboard(state: Dashboard): Dashboard {
 		storage: state.storage && {
 			...state.storage,
 			stagingBytes: state.storage.stagingBytes + downloadedThisTick,
+			freeBytes: Math.max(0, state.storage.freeBytes - downloadedThisTick),
 		},
 		console: {
 			...state.console,

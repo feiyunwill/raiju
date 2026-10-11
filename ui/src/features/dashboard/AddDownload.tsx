@@ -1,6 +1,6 @@
 import { cn } from "cn";
 import { FileUp, Link2, X } from "lucide-react";
-import { type DragEvent, useId, useState } from "react";
+import { type DragEvent, useEffect, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -16,9 +16,16 @@ import {
 	DrawerHeader,
 	DrawerTitle,
 } from "@/components/ui/drawer";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { describeSource } from "@/data/describe";
-import { type AddOptions, destinations } from "@/data/types";
+import {
+	type AddOptions,
+	destinations,
+	type FolderRoot,
+	type ProbeVerdict,
+} from "@/data/types";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 
 type AddDownloadProps = {
@@ -26,11 +33,15 @@ type AddDownloadProps = {
 	onOpenChange: (open: boolean) => void;
 	onAddLinks: (links: string[], options: AddOptions) => void;
 	onAddTorrents: (files: File[], options: AddOptions) => void;
+	roots: FolderRoot[];
+	onProbe: (uri: string) => Promise<ProbeVerdict | null>;
 };
 
 const title = "Add download";
 const description =
 	"Links go straight to your PS5. Archives are extracted and installed for you.";
+
+const probeDelayMs = 400;
 
 function parseLinks(text: string): string[] {
 	return [
@@ -54,18 +65,73 @@ function linkLabel(link: string): string {
 		.sourceName;
 }
 
+function isProbeable(link: string): boolean {
+	return /^https?:/i.test(link);
+}
+
 function AddDownloadForm({
 	onAddLinks,
 	onAddTorrents,
+	roots,
+	onProbe,
 	onDone,
 }: Omit<AddDownloadProps, "open" | "onOpenChange"> & { onDone: () => void }) {
+	const pills: FolderRoot[] =
+		roots.length > 0 ? roots : destinations.map((root) => ({ ...root }));
 	const [text, setText] = useState("");
 	const [torrents, setTorrents] = useState<File[]>([]);
-	const [destination, setDestination] = useState<string>(destinations[0].path);
+	const [destination, setDestination] = useState<string>(pills[0].path);
+	const [titleOverride, setTitleOverride] = useState<{
+		link: string;
+		value: string;
+	} | null>(null);
+	const [keepArchive, setKeepArchive] = useState(false);
+	const [verdict, setVerdict] = useState<ProbeVerdict | null>(null);
+	const [probing, setProbing] = useState(false);
 	const [dragging, setDragging] = useState(false);
 	const inputId = useId();
 	const links = parseLinks(text);
 	const total = links.length + torrents.length;
+	const probeLink = links.find(isProbeable);
+	const detected = describeSource(probeLink ? linkLabel(probeLink) : "");
+	const detectedTitleId =
+		detected.titleId === "UNKNOWN" ? null : detected.titleId;
+	const shownTitleId =
+		titleOverride && titleOverride.link === probeLink
+			? titleOverride.value
+			: (detectedTitleId ?? "");
+	const extension = detected.kind === "image" ? detected.format : "exfat";
+	const installName = shownTitleId ? `${shownTitleId}.${extension}` : null;
+
+	useEffect(() => {
+		if (!probeLink) {
+			setVerdict(null);
+			setProbing(false);
+			return;
+		}
+		let cancelled = false;
+		setVerdict(null);
+		setProbing(true);
+		const timer = setTimeout(() => {
+			onProbe(probeLink)
+				.then((result) => {
+					if (!cancelled) {
+						setVerdict(result);
+						setProbing(false);
+					}
+				})
+				.catch(() => {
+					if (!cancelled) {
+						setVerdict(null);
+						setProbing(false);
+					}
+				});
+		}, probeDelayMs);
+		return () => {
+			cancelled = true;
+			clearTimeout(timer);
+		};
+	}, [probeLink, onProbe]);
 
 	const addFiles = (files: FileList | null) => {
 		const picked = Array.from(files ?? []).filter((file) =>
@@ -84,7 +150,11 @@ function AddDownloadForm({
 	};
 
 	const submit = () => {
-		const options = { destination };
+		const options: AddOptions = {
+			destination,
+			titleId: links.length === 1 && shownTitleId ? shownTitleId : undefined,
+			keepArchive,
+		};
 		if (links.length > 0) {
 			onAddLinks(links, options);
 		}
@@ -141,6 +211,54 @@ function AddDownloadForm({
 					onChange={(event) => addFiles(event.target.files)}
 				/>
 			</label>
+			{probeLink && (
+				<div
+					aria-live="polite"
+					className="bg-foreground/[0.04] flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl px-3 py-2.5 font-mono text-[11px]"
+				>
+					{verdict ? (
+						<>
+							<span>{verdict.badge}</span>
+							<span className="text-muted-foreground">{verdict.size}</span>
+							<span>{verdict.extracted}</span>
+							<span className="text-muted-foreground">{verdict.required}</span>
+							<span className={verdict.destructive ? "text-destructive" : ""}>
+								{verdict.verdict}
+							</span>
+						</>
+					) : (
+						<span className="text-muted-foreground">
+							{probing
+								? "Checking the link…"
+								: "Raiju couldn't size this link up."}
+						</span>
+					)}
+				</div>
+			)}
+			{installName && (
+				<fieldset className="flex flex-col gap-2">
+					<legend className="text-muted-foreground mb-2 text-xs">
+						Will install as
+					</legend>
+					<div className="flex flex-wrap items-center gap-2 font-mono text-[13px]">
+						<Input
+							value={shownTitleId}
+							onChange={(event) =>
+								setTitleOverride({
+									link: probeLink ?? "",
+									value: event.target.value
+										.toUpperCase()
+										.replace(/[^A-Z0-9]/g, "")
+										.slice(0, 9),
+								})
+							}
+							aria-label="Title ID"
+							className="w-32 rounded-full text-center"
+						/>
+						<span>→ {installName}</span>
+					</div>
+				</fieldset>
+			)}
 			{total > 0 && (
 				<ul className="flex max-h-44 flex-col gap-2 overflow-y-auto">
 					{links.map((link) => {
@@ -192,7 +310,7 @@ function AddDownloadForm({
 					Install to
 				</legend>
 				<div className="flex flex-wrap gap-2">
-					{destinations.map((item) => (
+					{pills.map((item) => (
 						<label
 							key={item.id}
 							className={cn(
@@ -214,6 +332,19 @@ function AddDownloadForm({
 							{item.label}
 						</label>
 					))}
+				</div>
+			</fieldset>
+			<fieldset className="flex flex-col gap-2">
+				<legend className="text-muted-foreground mb-2 text-xs">
+					After download
+				</legend>
+				<div className="flex items-center justify-between gap-4">
+					<span className="text-[13px]">Delete archive after extracting</span>
+					<Switch
+						checked={!keepArchive}
+						onCheckedChange={(on) => setKeepArchive(!on)}
+						aria-label="Delete archive after extracting"
+					/>
 				</div>
 			</fieldset>
 			<div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

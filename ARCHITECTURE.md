@@ -165,7 +165,7 @@ The gateway lives in `payload/gateway` and builds and tests on macOS and Linux w
 | `POST /api/jobs/:id/{retry,cancel,resolve}` | token | Retry a failed stage, cancel, answer a name-conflict prompt |
 | `POST /api/probe` | token | HEAD + range read a URL for size, kind, uncompressed size and a fits verdict |
 | `GET /api/art/:id` | token | Cover art for a title ID from OrbisPatches/ProsperoPatches |
-| `POST /api/power/keep-awake` | token | Toggle keep-awake (#18) |
+| `POST /api/power/keep-awake`, `POST /api/power/notifications` | token | Toggle a payload power option; body `{"on":bool}` (#18) |
 | `POST /api/pair`, `DELETE /api/devices/:id` | mixed | Pairing and device token management |
 
 Every endpoint but `GET /api/status` needs a device token (cookie or `Authorization: Bearer`).
@@ -202,10 +202,11 @@ Every endpoint but `GET /api/status` needs a device token (cookie or `Authorizat
 ### 2. Web UI (`ui/`)
 
 - **Stack:** Vite + React + TypeScript + Tailwind CSS v4 + shadcn/ui. It's a static SPA, with no SSR and no Next.js, because the PS5 serves it as plain files.
-- **Data layer:**
-  - A typed aria2 JSON-RPC client with a WebSocket connection: `aria2.onDownloadStart/Pause/Complete/Error` events trigger refetches.
-  - Polling `tellActive` once per second while the window is visible. `tellWaiting`/`tellStopped` are fetched on demand.
-  - TanStack Query for caching and refetching.
+- **Data layer (`ui/src/data/`).** Jobs, stages, storage, preset folders, the probe, pairing and devices come from the Raiju `/api` through the typed client in `ui/src/api/`, because only the gateway knows the pipeline. aria2, through the gateway's `/jsonrpc` proxy, supplies what the API doesn't carry: speed, connection counts, per-download options, and the detail sheet's files, peers and servers, matched to jobs by GID. `ui/src/api/map.ts` holds the API→UI mapping (stage, kind, install name, error sentences) and is unit-tested.
+  - Polling: `/api/jobs` once per second while the window is visible, `/api/status` every two seconds until the console answers, storage every ten seconds, and `/api/folders` once per connection. `aria2.onDownloadStart/Pause/Complete/Error` events over the WebSocket trigger an immediate refetch.
+  - `GET /api/status` is public, so the UI separates "console off" from "not paired yet": a refused connection shows the unreachable screen with background retries, a 401 shows the pairing screen.
+  - `VITE_DEMO=true`, or a plain dev server with no gateway, uses the simulated source in `ui/src/data/mockSource.ts`, so the UI works without a console.
+- **Working against a console in development:** start the dev server with `VITE_GATEWAY_URL=http://<ps5>:8080`; the Vite config proxies `/api` and `/jsonrpc` to the console, so the `raiju_device` cookie stays first-party.
 - **Budget:** ≤ 300 KB gzipped total, since it's embedded in the ELF.
 - Design system and screens: see [DESIGN.md](DESIGN.md).
 

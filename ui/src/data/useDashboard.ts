@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { createAria2Source } from "./aria2Source";
+import { createGatewaySource } from "./gatewaySource";
 import { createMockSource } from "./mockSource";
 import type {
 	Dashboard,
@@ -11,26 +11,23 @@ import type {
 let source: DashboardSource | null = null;
 
 /**
- * Picks the data source once: demo when `VITE_DEMO=true`, otherwise aria2 at `VITE_ARIA2_URL`, otherwise
- * the gateway's `/jsonrpc` on the serving origin in production builds, and the demo in plain development.
+ * Picks the data source once: the demo when `VITE_DEMO=true` or when nothing is serving the API, and
+ * the Raiju API otherwise. Requests always go to the page's own origin — the console in a build it
+ * serves, or the dev server's proxy when `VITE_GATEWAY_URL` points at one.
  */
 export function getDashboardSource(): DashboardSource {
 	if (source) {
 		return source;
 	}
 	const env = import.meta.env;
-	if (env.VITE_DEMO === "true") {
-		source = createMockSource();
-	} else if (env.VITE_ARIA2_URL) {
-		source = createAria2Source(
-			env.VITE_ARIA2_URL,
-			env.VITE_ARIA2_SECRET || undefined,
-		);
-	} else if (env.PROD) {
-		source = createAria2Source(`${window.location.origin}/jsonrpc`);
-	} else {
-		source = createMockSource();
-	}
+	const live =
+		env.VITE_DEMO !== "true" && (env.PROD || Boolean(env.VITE_GATEWAY_URL));
+	source = live
+		? createGatewaySource({
+				baseUrl: "",
+				jsonrpcUrl: `${window.location.origin}/jsonrpc`,
+			})
+		: createMockSource();
 	return source;
 }
 

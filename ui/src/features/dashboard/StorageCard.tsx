@@ -31,10 +31,7 @@ export function StorageCard({ storage, incomingBytes }: StorageCardProps) {
 			</section>
 		);
 	}
-	const free = Math.max(
-		0,
-		storage.totalBytes - storage.gamesBytes - storage.stagingBytes,
-	);
+	const free = Math.max(0, storage.freeBytes);
 	const fits = incomingBytes <= free;
 	const segments = [
 		{ label: "Games", bytes: storage.gamesBytes, className: "bg-foreground" },

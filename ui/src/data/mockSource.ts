@@ -1,11 +1,17 @@
+import { kindBadge } from "@/api";
+import { formatBytes } from "@/lib/format";
 import { describeSource } from "./describe";
+import { defaultSettings } from "./gatewaySource";
 import { createMockDashboard, tickMockDashboard } from "./mock";
 import type {
 	Dashboard,
 	DashboardSource,
+	Device,
 	Job,
 	JobDetail,
 	JobStatus,
+	ProbeVerdict,
+	Settings,
 } from "./types";
 
 /** Builds a waiting demo job from a pasted link. */
@@ -25,6 +31,36 @@ export function jobFromLink(link: string, index: number): Job {
 		speed: 0,
 		connections: 0,
 		uris: [link],
+	};
+}
+
+function hashOf(text: string): number {
+	let hash = 0;
+	for (let i = 0; i < text.length; i++) {
+		hash = (hash * 31 + text.charCodeAt(i)) % 1_000_000_007;
+	}
+	return hash;
+}
+
+/** Stands in for the probe: the same wording, from a size derived from the link itself. */
+function demoVerdict(link: string, freeBytes: number): ProbeVerdict {
+	const description = describeSource(
+		link.split(/[?#]/)[0]?.split("/").pop() || link,
+	);
+	const size = (20 + (hashOf(link) % 60)) * 1_000_000_000;
+	const uncompressed = Math.round(size * 1.06);
+	const required = uncompressed + 1_000_000_000;
+	const fits = required <= freeBytes;
+	return {
+		badge: kindBadge(description.format),
+		size: formatBytes(size),
+		extracted: `→ ${formatBytes(uncompressed)}`,
+		required: `needs ${formatBytes(required)}`,
+		verdict: fits
+			? `fits (${formatBytes(freeBytes)} free)`
+			: `needs ${formatBytes(required - freeBytes)} more`,
+		destructive: !fits,
+		category: description.kind === "image" ? "image" : "archive",
 	};
 }
 
@@ -60,6 +96,11 @@ export function createMockSource(): DashboardSource {
 	let timer: ReturnType<typeof setInterval> | null = null;
 	const listeners = new Set<() => void>();
 	const limits = new Map<string, number>();
+	let settings: Settings = defaultSettings;
+	let devices: Device[] = [
+		{ id: "demo-laptop", label: "This browser", current: true },
+		{ id: "demo-tablet", label: "iPad", current: false },
+	];
 
 	const set = (next: Dashboard) => {
 		state = next;
@@ -149,6 +190,50 @@ export function createMockSource(): DashboardSource {
 				return job
 					? { ...demoDetail(job), maxDownloadLimit: limits.get(id) ?? 0 }
 					: null;
+			},
+			resolveConflict: (id, choice) =>
+				set({
+					...state,
+					jobs:
+						choice === "cancel"
+							? state.jobs.filter((job) => job.id !== id)
+							: state.jobs.map((job) =>
+									job.id === id
+										? {
+												...job,
+												status: "active",
+												stageDoneBytes: 0,
+												installName:
+													choice === "rename"
+														? job.installName.replace(
+																/(\.[^.]+)?$/,
+																(extension) => `-2${extension}`,
+															)
+														: job.installName,
+											}
+										: job,
+								),
+				}),
+			probe: async (uri) => demoVerdict(uri, state.storage?.freeBytes ?? 0),
+			pair: async (code) => {
+				if (!/^\d{4}$/.test(code)) {
+					set({
+						...state,
+						notice: "Enter the 4-digit code shown on your PS5.",
+					});
+					return false;
+				}
+				set({ ...state, connection: "online", notice: null });
+				return true;
+			},
+			loadDevices: async () => devices,
+			revokeDevice: async (id) => {
+				devices = devices.filter((device) => device.id !== id);
+			},
+			loadSettings: async () => settings,
+			saveSettings: async (next) => {
+				settings = next;
+				return true;
 			},
 			dismissNotice: () => set({ ...state, notice: null }),
 		},

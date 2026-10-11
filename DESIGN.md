@@ -156,10 +156,10 @@ lucide-react (shadcn's default), stroke width 1.5, 20px default size. Icons are 
 | Add download | `Drawer` (mobile) / `Dialog` (desktop) |
 | Task detail | `Sheet` |
 | Row menus | `DropdownMenu` |
-| Settings controls | `Switch`, `Slider`, `Select`, `Input`, `Textarea`, `ToggleGroup` |
+| Settings controls | `Switch`, `Input`, `Textarea`, pill radio groups (no `Slider`/`Select` yet) |
 | Speed graph | `Chart` (Recharts area, `--chart-1/2`) |
 | Notifications | `Sonner` |
-| Pairing code | `InputOTP` |
+| Pairing code | `InputOTP` (Radix `OneTimePasswordField`, no extra dependency) |
 | Empty and loading states | `Empty`, `Skeleton` |
 | Quick add (desktop) | `Command` (⌘K, paste a link) |
 | Hints | `Tooltip` |

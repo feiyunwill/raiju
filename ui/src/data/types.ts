@@ -1,3 +1,5 @@
+import type { ConflictChoice } from "@/api/types";
+
 export type Stage = "download" | "verify" | "extract" | "install" | "ready";
 
 export type JobKind = "image" | "archive" | "folder";
@@ -50,6 +52,7 @@ export type JobDetail = {
 
 export type Storage = {
 	totalBytes: number;
+	freeBytes: number;
 	gamesBytes: number;
 	stagingBytes: number;
 };
@@ -58,7 +61,22 @@ export type Console = {
 	host: string;
 	online: boolean;
 	version: string;
+	engine: string;
+	firmware: string;
 	uptimeSeconds: number | null;
+};
+
+/** How the UI is talking to the console right now, and what to show when it isn't. */
+export type ConnectionState =
+	| "connecting"
+	| "online"
+	| "unpaired"
+	| "unreachable";
+
+export type FolderRoot = {
+	id: string;
+	label: string;
+	path: string;
 };
 
 export type Dashboard = {
@@ -66,11 +84,60 @@ export type Dashboard = {
 	speedHistory: number[];
 	storage: Storage | null;
 	console: Console;
+	connection: ConnectionState;
+	folders: FolderRoot[];
 	notice: string | null;
 };
 
 export type AddOptions = {
 	destination: string;
+	titleId?: string;
+	keepArchive?: boolean;
+	conflict?: "rename" | "replace";
+};
+
+/** The probe verdict as the Add-download row shows it, e.g. `ARCHIVE · 7z · 38 GB → 41 GB`. */
+export type ProbeVerdict = {
+	badge: string;
+	size: string;
+	extracted: string;
+	required: string;
+	verdict: string;
+	destructive: boolean;
+	category: "archive" | "image" | "other";
+};
+
+export type Device = {
+	id: string;
+	label: string;
+	current: boolean;
+};
+
+export type SpeedProfile = "balanced" | "max" | "custom";
+
+export type SpeedSettings = {
+	profile: SpeedProfile;
+	connectionsPerServer: number;
+	split: number;
+	downloadLimit: number;
+	uploadLimit: number;
+};
+
+export type DownloadSettings = {
+	directory: string;
+	concurrent: number;
+	fileAllocation: "none" | "prealloc" | "falloc";
+};
+
+export type ConsoleSettings = {
+	keepAwake: boolean;
+	notifications: boolean;
+};
+
+export type Settings = {
+	speed: SpeedSettings;
+	downloads: DownloadSettings;
+	console: ConsoleSettings;
 };
 
 export type DashboardActions = {
@@ -83,6 +150,17 @@ export type DashboardActions = {
 	addTorrents: (files: File[], options: AddOptions) => void;
 	setSpeedLimit: (id: string, bytesPerSecond: number) => void;
 	loadDetail: (id: string) => Promise<JobDetail | null>;
+	/** Answers a name-conflict prompt and lets the job carry on. */
+	resolveConflict: (id: string, choice: ConflictChoice) => void;
+	/** One URL at a time; null while the verdict is unknown. */
+	probe: (uri: string) => Promise<ProbeVerdict | null>;
+	/** Exchanges the code shown on the PS5 for a device token. True once paired. */
+	pair: (code: string) => Promise<boolean>;
+	loadDevices: () => Promise<Device[]>;
+	revokeDevice: (id: string) => Promise<void>;
+	loadSettings: () => Promise<Settings>;
+	/** True when the console accepted the change; false when it refused it. */
+	saveSettings: (next: Settings) => Promise<boolean>;
 	dismissNotice: () => void;
 };
 

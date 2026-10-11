@@ -18,10 +18,12 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Progress } from "@/components/ui/progress";
 import type { DashboardActions, Job, JobStatus } from "@/data/types";
 import { formatBytes } from "@/lib/format";
-import { jobEta, jobKindLabel, jobStatusLine } from "./jobText";
+import { ConflictPrompt } from "./ConflictPrompt";
+import { JobKindBadge } from "./JobKindBadge";
+import { jobEta, jobHasConflict, jobStatusLine } from "./jobText";
+import { StageProgress } from "./StageProgress";
 import { StageStepper } from "./StageStepper";
 import { TitleArt } from "./TitleArt";
 
@@ -129,6 +131,7 @@ function JobRow({
 		job.status === "active" ||
 		job.status === "paused" ||
 		job.status === "waiting";
+	const conflict = jobHasConflict(job);
 	return (
 		<li
 			data-row
@@ -159,18 +162,10 @@ function JobRow({
 			<div className="flex min-w-0 flex-1 flex-col gap-2">
 				<div className="flex items-baseline justify-between gap-3">
 					<p className="truncate font-medium">{job.name}</p>
-					<span className="text-muted-foreground hidden shrink-0 font-mono text-[10px] tracking-wider sm:inline">
-						{jobKindLabel(job)}
-					</span>
+					<JobKindBadge job={job} className="hidden sm:inline-flex" />
 				</div>
 				{job.status === "active" || job.status === "paused" ? (
-					<Progress
-						value={
-							job.stageBytes > 0
-								? (job.stageDoneBytes / job.stageBytes) * 100
-								: 0
-						}
-					/>
+					<StageProgress job={job} />
 				) : (
 					<div className="max-w-xs">
 						<StageStepper
@@ -181,22 +176,26 @@ function JobRow({
 						/>
 					</div>
 				)}
-				<p
-					className={cn(
-						"truncate text-xs",
-						job.status === "failed"
-							? "text-destructive"
-							: "text-muted-foreground",
-					)}
-				>
-					{job.error ?? jobStatusLine(job)}
-				</p>
+				{conflict ? (
+					<ConflictPrompt job={job} onResolve={actions.resolveConflict} />
+				) : (
+					<p
+						className={cn(
+							"truncate text-xs",
+							job.status === "failed"
+								? "text-destructive"
+								: "text-muted-foreground",
+						)}
+					>
+						{job.error ?? jobStatusLine(job)}
+					</p>
+				)}
 			</div>
 			<div className="text-muted-foreground hidden w-24 shrink-0 text-right text-xs md:block">
 				<p className="text-foreground">{formatBytes(job.totalBytes)}</p>
 				<p>{jobEta(job)}</p>
 			</div>
-			{canToggle && (
+			{canToggle && !conflict && (
 				<Button
 					size="icon-sm"
 					variant="secondary"
