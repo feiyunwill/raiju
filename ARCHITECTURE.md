@@ -234,7 +234,7 @@ Motrix's speed is aria2 with good defaults. Raiju ships the same tuning, editabl
 | `min-split-size` | 10M | Don't split small files into tiny ranges. It also caps parallelism — pieces = size / this — so a file has to be large enough for the connection count asked of it: measured in #4, a 256 MB file at the 20 MB default split about twelve ways whatever `split` said |
 | `max-concurrent-downloads` | 5 | |
 | `disk-cache` | 64M | Batches writes; fewer NVMe syncs |
-| `file-allocation` | `falloc` if the PS5 filesystem supports `posix_fallocate`, else `none` | Avoid writing zeros twice; measure in M0 |
+| `file-allocation` | `none` | `posix_fallocate` is not implemented on `/data` (#7), so `falloc` and `prealloc` cannot work; `trunc`, a sparse `ftruncate`, is the only other mode the console can implement |
 | `no-file-allocation-limit` | 64M | |
 | `enable-http-keep-alive` | true | |
 | `async-dns` + c-ares | on (M1) | Faster connection setup |

@@ -49,6 +49,9 @@ static void options_contain_the_required_settings(void) {
 	CHECK(strstr(rendered, "save-session=") != NULL);
 	CHECK(strstr(rendered, "input-file=") != NULL);
 	CHECK(strstr(rendered, "max-connection-per-server=16\n") != NULL);
+	CHECK(strstr(rendered, "file-allocation=none\n") != NULL);
+	CHECK(strstr(rendered, "falloc") == NULL);
+	CHECK(strstr(rendered, "prealloc") == NULL);
 	free(rendered);
 
 	char options_path[1200];

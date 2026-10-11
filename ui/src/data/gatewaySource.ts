@@ -18,6 +18,7 @@ import {
 	syncAria2,
 } from "@/aria2";
 import { aria2Files, aria2SourceName } from "./aria2Adapter";
+import { fileAllocationFromOption } from "./fileAllocation";
 import {
 	type AddOptions,
 	type Console,
@@ -52,7 +53,7 @@ export const defaultSettings: Settings = {
 	downloads: {
 		directory: destinations[0].path,
 		concurrent: 5,
-		fileAllocation: "falloc",
+		fileAllocation: "none",
 	},
 	console: { keepAwake: true, notifications: true },
 };
@@ -455,11 +456,7 @@ export function createGatewaySource(options: {
 						"max-concurrent-downloads",
 						settings.downloads.concurrent,
 					),
-					fileAllocation:
-						options["file-allocation"] === "none" ||
-						options["file-allocation"] === "prealloc"
-							? options["file-allocation"]
-							: "falloc",
+					fileAllocation: fileAllocationFromOption(options["file-allocation"]),
 				},
 				console: settings.console,
 			};

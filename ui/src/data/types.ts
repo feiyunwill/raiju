@@ -123,10 +123,12 @@ export type SpeedSettings = {
 	uploadLimit: number;
 };
 
+export type FileAllocation = "none" | "trunc";
+
 export type DownloadSettings = {
 	directory: string;
 	concurrent: number;
-	fileAllocation: "none" | "prealloc" | "falloc";
+	fileAllocation: FileAllocation;
 };
 
 export type ConsoleSettings = {

@@ -5,6 +5,7 @@ import { useArtworkEnabled } from "@/artwork/useArtwork";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { fileAllocationModes } from "@/data/fileAllocation";
 import type {
 	Console,
 	DashboardActions,
@@ -25,15 +26,6 @@ const profiles: {
 	{ id: "balanced", label: "Balanced", connectionsPerServer: 16, split: 16 },
 	{ id: "max", label: "Max", connectionsPerServer: 64, split: 64 },
 	{ id: "custom", label: "Custom", connectionsPerServer: 16, split: 16 },
-];
-
-const allocations: {
-	id: Settings["downloads"]["fileAllocation"];
-	label: string;
-}[] = [
-	{ id: "none", label: "none" },
-	{ id: "prealloc", label: "prealloc" },
-	{ id: "falloc", label: "falloc" },
 ];
 
 function Row({
@@ -317,8 +309,8 @@ export function SettingsView({
 					<Row label="File allocation">
 						<Pills
 							name="file-allocation"
-							value={settings?.downloads.fileAllocation ?? "falloc"}
-							options={allocations}
+							value={settings?.downloads.fileAllocation ?? "none"}
+							options={fileAllocationModes}
 							onChange={(id) =>
 								settings &&
 								void save({
