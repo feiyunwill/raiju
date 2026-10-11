@@ -1,5 +1,6 @@
 node_modules/
 dist/
+build/
 *.elf
 *.o
 .DS_Store

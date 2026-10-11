@@ -91,10 +91,10 @@ stateDiagram-v2
 
    An image with the wrong header, e.g. an HTML error page saved as `.ffpkg`, fails the job instead of being installed.
 
-   **2b. Structural check (images).** exFAT: verify the boot-region checksum (sector 11 of the boot region) and the 64 KiB cluster size ShadowMountPlus recommends, warning otherwise. UFS2: check the superblock's block/fragment sizes and that the image size covers the filesystem size.
+   **2b. Structural check (images).** exFAT: verify the boot-region checksum (sector 11 of the boot region), that the volume length fits in the file, and the 64 KiB cluster size ShadowMountPlus recommends, warning otherwise. UFS2: check the superblock's block/fragment sizes and that the image size covers the filesystem size.
 
    **2c. Identify the title.** Decide the install name `<TITLE_ID>`:
-   1. Read `sce_sys/param.json` → `titleId`. For archives, from the entry while extracting. For folder dumps, from disk. For images, read-only through a minimal exFAT/UFS2 reader that only walks root → `sce_sys` → `param.json` (exFAT is simple; UFS2 is about a day of work).
+   1. Read `sce_sys/param.json` → top-level `titleId`, which must be four uppercase letters and five digits; a malformed document or value counts as missing. For archives, from the entry while extracting. For folder dumps, from disk. For images, read-only through a minimal exFAT/UFS2 reader that only walks root → `sce_sys` → `param.json` (exFAT is simple; UFS2 is about a day of work).
    2. Otherwise, use a regex on the original file or archive name: `(PPSA|CUSA)\d{5}`.
    3. Otherwise, pause the job and ask the user in the UI.
    `param.json`'s display name (`localizedParameters`) is stored with the job for the UI. If (1) and (2) disagree, (1) wins and the UI shows a note.
@@ -241,6 +241,7 @@ Downloading during rest mode itself isn't possible from a payload.
 raiju/
 ├─ payload/          # raiju.elf: supervisor, gateway, processor, API
 │  ├─ src/
+│  ├─ processor/     # portable C11 pipeline stages; `make -C payload/processor test` runs host unit tests
 │  ├─ third_party/   # aria2 (fork), libarchive, openssl, zlib, zstd, xz, c-ares, civetweb
 │  └─ Makefile
 ├─ ui/               # Vite + React + shadcn SPA (shared by all clients)
