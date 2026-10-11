@@ -9,3 +9,6 @@ build/
 .claude/worktrees/
 .reasonix/
 payload/third_party/civetweb/
+payload/third_party/cache/
+payload/third_party/src/
+payload/third_party/ps5/

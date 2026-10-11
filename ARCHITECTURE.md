@@ -311,7 +311,8 @@ raiju/
 │  ├─ src/
 │  ├─ processor/     # portable C11 pipeline stages; `make -C payload/processor test` runs host unit tests (needs libarchive and pkg-config), `make -C payload/processor sanitize` runs them under ASan and UBSan
 │  ├─ gateway/       # portable C11 HTTP gateway + pairing; `make -C payload/gateway test` runs host unit and aria2 integration tests, `make -C payload/gateway sanitize` runs them under ASan and UBSan; embeds `ui/dist` (needs a local `aria2c` for the integration test)
-│  ├─ third_party/   # aria2 (fork), libarchive, openssl, zlib, zstd, xz, c-ares, civetweb (fetched and gitignored)
+│  ├─ third_party/   # build scripts plus the fetched, gitignored sources: aria2 (fork), libarchive, openssl, zlib, zstd, xz, c-ares, civetweb
+│  ├─ spikes/        # M0 spike payloads, one directory per question: privileges (#2), tls (#3)
 │  └─ Makefile
 ├─ ui/               # Vite + React + shadcn SPA (shared by all clients)
 ├─ companion/        # Tauri 2 desktop app (Rust), wraps ui/ (M2)
@@ -322,6 +323,8 @@ raiju/
 ```
 
 Build: `make ui` (outputs `ui/dist`) → `make payload` (embeds `ui/dist` and outputs `raiju.elf`) → `make send PS5_HOST=…` (pushes to port 9021).
+
+The console needs its own copies of the third-party libraries, so `payload/third_party/build-tls.sh` pins zlib, OpenSSL 3 and a CA bundle by sha256, cross-compiles them statically into `payload/third_party/ps5/` (gitignored), and runs in CI as part of the payload job. On macOS the SDK's wrappers reach LLVM through `llvm-config`, so `LLVM_CONFIG` has to point at `llvm@18`; CI installs `llvm-18`, which is already on `PATH`.
 
 ## Licensing
 
