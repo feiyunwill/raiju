@@ -67,6 +67,10 @@ jobs:
         env:
           PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk
         run: sh payload/third_party/build-tls.sh
+      - name: Build libarchive and its decoders for the console
+        env:
+          PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk
+        run: sh payload/third_party/build-libarchive.sh
       - name: Build raiju.elf
         env:
           PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk

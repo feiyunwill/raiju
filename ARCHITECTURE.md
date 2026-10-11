@@ -129,7 +129,7 @@ The code lives in `payload/processor`: `job.h` (the job model), `job_store.h` (j
 
 Space accounting. Before download: `archive_size + uncompressed_size + 1 GiB margin ≤ free(/data)`, where free space is `f_bavail × f_frsize` from `statvfs` (injectable for tests). Images and other files count only their own size plus the margin. Adding a job with a known size runs this check and refuses the job when it doesn't fit; when free space can't be read the job is allowed. For 7z/zip the uncompressed size comes from the file index at the end of the archive, read with an HTTP range request. For tar.* it's unknown up front, so Raiju warns and estimates 1× the archive size.
 
-Libraries: libarchive (BSD), built with zstd, xz/lzma, zlib and bzip2. If benchmarks show 7z LZMA2 is the bottleneck, add 7-Zip's C decoder (`LzmaDec`/`Lzma2DecMt`, public domain), which can decode LZMA2 on multiple threads when the archive was created with multiple blocks.
+Libraries: libarchive (BSD), built with zstd, xz/lzma, zlib and bzip2. The M0 benchmark (#6) measured 7z LZMA2 at 21.54 MB/s against zip's 69.53 and tar.zst's 43.15 on the console, so 7z LZMA2 is the bottleneck and 7-Zip's C decoder (`LzmaDec`/`Lzma2DecMt`, public domain) decodes it, on multiple threads when the archive was created with multiple blocks — see [ADR 0002](docs/adr/0002-archive-decoders.md).
 
 **Gateway (HTTP server)**
 - CivetWeb (MIT) is the embeddable server. Avoid Mongoose: its open-source license is GPLv2-only, which is incompatible with GPLv3.
@@ -322,7 +322,7 @@ raiju/
 
 Build: `make ui` (outputs `ui/dist`) → `make payload` (embeds `ui/dist` and outputs `raiju.elf`) → `make send PS5_HOST=…` (pushes to port 9021).
 
-The console needs its own copies of the third-party libraries, so `payload/third_party/build-tls.sh` pins zlib, OpenSSL 3 and a CA bundle by sha256, cross-compiles them statically into `payload/third_party/ps5/` (gitignored), and runs in CI as part of the payload job. On macOS the SDK's wrappers reach LLVM through `llvm-config`, so `LLVM_CONFIG` has to point at `llvm@18`; CI installs `llvm-18`, which is already on `PATH`. `build-aria2.sh` follows the same shape for aria2, applying the connection patch after it unpacks upstream.
+The console needs its own copies of the third-party libraries, so `payload/third_party/build-tls.sh` pins zlib, OpenSSL 3 and a CA bundle by sha256, cross-compiles them statically into `payload/third_party/ps5/` (gitignored), and runs in CI as part of the payload job. On macOS the SDK's wrappers reach LLVM through `llvm-config`, so `LLVM_CONFIG` has to point at `llvm@18`; CI installs `llvm-18`, which is already on `PATH`. `build-aria2.sh` follows the same shape for aria2, applying the connection patch after it unpacks upstream, and `build-libarchive.sh` does the same for bzip2, xz, zstd and libarchive, which libarchive itself links against.
 
 ## Licensing
 
@@ -340,5 +340,5 @@ Raiju is **GPL-3.0-or-later**, matching ps5-payload-dev projects such as ftpsrv 
 3. **Embedded libaria2 vs standalone** (integration mode A vs B). Settled: embedded (ADR 0001) — a payload cannot spawn a program it built, so there was no mode B to have.
 4. **`posix_fallocate` support on `/data`**, and sustained write speed.
 5. **Keep-awake API**, and whether the payload survives rest mode.
-6. **libarchive build and throughput** on the PS5 for 7z LZMA2, zip and tar.zst, measured on a real 50 GB dump.
+6. **libarchive build and throughput** on the PS5 for 7z LZMA2, zip, tar.zst and rar5. Measured in #6: libarchive cross-compiled with all four decoders, and per-format rates of 21.54, 69.53, 43.15 and 16.69 MB/s on 1 GiB samples with one 4 GiB 7z pass. [ADR 0002](docs/adr/0002-archive-decoders.md) settles the decoder question; a pass of 20 GB or more on a real dump is still owed, because anything smaller sits in a 16 GB console's page cache.
 7. **ShadowMountPlus behavior with renamed-in images:** confirm a `rename()` into a scan path plus `/api/v1/scan` mounts immediately. Also check how `scan_depth` treats images placed directly in `/data/homebrew` vs in a subfolder.
