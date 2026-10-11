@@ -99,10 +99,11 @@ lucide-react (shadcn's default), stroke width 1.5, 20px default size. Icons are 
 ## Screens
 
 ### Home
-- **Hero:** total download speed as a large numeral (`84.2 MB/s`), with a live area chart of the last 60s behind it, monochrome.
-- **Storage meter:** a pill-shaped bar showing NVMe used/free, e.g. `612 GB free of 825 GB`.
-- **Active downloads:** horizontal row of tiles on desktop, vertical list on mobile. Each tile shows: name, progress bar, `% · speed · ETA`, and a pause/resume button.
-- **Primary action:** a round "+" button, bottom-right on mobile, opens Add Download.
+- **Header:** wordmark, centred pill navigation (Home · Downloads · Settings) on desktop, console status pill (`PS5 192.168.1.50`, pulsing dot when online), and the white "Add download ⌘K" pill. On phones the nav moves to a floating glass pill at the bottom.
+- **Now downloading (hero tile):** cover art (generated monochrome tile with initials and title ID until real artwork is available), name, source file, kind badge, the speed as the largest numeral on screen, progress / remaining / connections, a progress bar labelled with the install name, a Pause/Resume pill and the stage stepper.
+- **Throughput:** Vercel-style metric tabs (Speed, Peak 60s, Last minute) over a live 60-second area chart drawn in the foreground colour with hairline gridlines.
+- **Internal storage:** free space as a large numeral, a segmented bar (games, Raiju staging, free) and a "Queue needs X · fits" pre-flight line.
+- **Queue:** the first four jobs from the Downloads list, with "View all".
 
 ### Job stages (on every tile and row)
 - A five-step stepper under the progress bar: **Download · Verify · Extract · Install · Ready**. Steps that don't apply (e.g. Extract for an `.ffpkg`) are hidden, not greyed out.

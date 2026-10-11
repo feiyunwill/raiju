@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" class="dark">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+		<meta name="color-scheme" content="dark light" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<title>Raiju</title>
+		<script>
+			(() => {
+				let preference = "dark";
+				try {
+					preference = localStorage.getItem("raiju.theme") || "dark";
+				} catch {}
+				const dark =
+					preference === "dark" ||
+					(preference === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+				document.documentElement.classList.toggle("dark", dark);
+			})();
+		</script>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
+</html>

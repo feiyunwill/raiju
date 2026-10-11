@@ -1,0 +1,6 @@
+dist-ssr
+*.local
+*.log
+.vscode/*
+!.vscode/extensions.json
+.idea
