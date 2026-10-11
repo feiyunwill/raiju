@@ -8,3 +8,4 @@ build/
 !.env.example
 .claude/worktrees/
 .reasonix/
+payload/third_party/civetweb/

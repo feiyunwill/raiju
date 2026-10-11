@@ -86,5 +86,28 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run --cwd ui test
 
+  gateway:
+    name: Gateway tests
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install aria2 (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y aria2
+      - name: Install aria2 (macOS)
+        if: runner.os == 'macOS'
+        run: brew install aria2
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd ui build
+      - run: make -C payload/gateway test EMBED_DIR="$PWD/ui/dist"
+      - run: bun run check
+
   build:
     uses: ./.github/workflows/build.yml

@@ -133,10 +133,23 @@ Space accounting. Before download: `archive_size + uncompressed_size + 1 GiB mar
 Libraries: libarchive (BSD), built with zstd, xz/lzma, zlib and bzip2. If benchmarks show 7z LZMA2 is the bottleneck, add 7-Zip's C decoder (`LzmaDec`/`Lzma2DecMt`, public domain), which can decode LZMA2 on multiple threads when the archive was created with multiple blocks.
 
 **Gateway (HTTP server)**
-- Small embeddable server, e.g. CivetWeb (MIT). Avoid Mongoose: its open-source license is GPLv2-only, which is incompatible with GPLv3.
+- CivetWeb (MIT) is the embeddable server. Avoid Mongoose: its open-source license is GPLv2-only, which is incompatible with GPLv3.
 - Serves the UI, which is embedded in the ELF at build time. If `/data/raiju/www` exists it takes precedence, which lets you update the UI without rebuilding the ELF.
-- Reverse-proxies `/jsonrpc` (HTTP and WebSocket) to aria2 on loopback and injects the aria2 secret. Clients never see that secret.
-- Auth: on first visit the UI asks for the 4-digit pairing code shown on the PS5. The gateway then issues a long-lived device token, stored in an HTTP-only cookie (extension clients send it as a header). Tokens can be revoked in Settings.
+- Reverse-proxies `/jsonrpc` (HTTP and WebSocket) to aria2 on loopback and injects the aria2 secret as the first `params` element. Clients never see that secret.
+- Auth: on first visit the UI asks for the 4-digit pairing code shown on the PS5. `POST /api/pair` verifies the code in constant time with an exponential backoff on wrong attempts, then issues a long-lived device token. The token travels in the HTTP-only `raiju_device` cookie (extension clients send it as an `Authorization` header). `GET /api/devices` lists them and `DELETE /api/devices/:id` revokes one, both behind the token gate. Tokens can be revoked in Settings.
+- Only `GET /api/status` (companion discovery) and the static UI are reachable without a token; the status document never carries the secret, the pairing code or any token.
+
+The gateway lives in `payload/gateway` and builds and tests on macOS and Linux with its own host Makefile (`make -C payload/gateway test`, `sanitize`), independent of the PS5 SDK. It is organised as:
+
+- `include/raiju/*.h` public headers; `src/` implementations; `tests/` with a tiny harness and a real integration test.
+- `platform.h` + `src/platform_host.c`: every PS5-only call (notifications, privilege escalation, `statfs`, interface IP, engine launch, RNG) sits behind this one interface so the host build substitutes fakes. **The PS5 implementation lands with the payload build (#1); this issue ships only the host implementation.**
+- `supervisor.c`: creates `/data/raiju/{downloads,staging,trash,session,www}`, takes the single-instance lock, generates the pairing code, writes `session/aria2.conf` and `session/aria2.secret`, starts the engine and shows the ready notification.
+- `engine_options.c`: renders the aria2 options from the tuning table below (RPC on loopback, session persistence) and persists the secret atomically.
+- `assets.c` + `tools/gen_assets.c`: a build-time tool walks an embed directory (`ui/dist` by default, overridable with `EMBED_DIR`) and emits a `{path, bytes}` table; an absent directory yields an empty table. `www` wins over the embedded table.
+- `proxy.c`: secret injection and a minimal loopback HTTP client; `server.c` adapts CivetWeb and bridges the `/jsonrpc` WebSocket to aria2's.
+- `pairing.c` (device store under `session/devices.json`, written atomically), `allowlist.c` (the Security roots), `auth.c`, `http.c` (routing table + request/response helpers), `gateway.c` (routes and handlers).
+- Routing is a table of `raiju_route` handlers with the gateway as their context. Issue #17 adds `/api/storage`, `/api/folders`, `/api/jobs`, `/api/probe`, `/api/art` and `/api/power/keep-awake` by appending routes with `raiju_gateway_add_route` and implementing handlers — no change to the core.
+- CivetWeb is fetched by the Makefile from the pinned `v1.16` release tarball, verified by sha256, into `payload/third_party/civetweb` (gitignored). It is built without TLS.
 
 **Raiju system API (`/api`)**
 
@@ -260,7 +273,8 @@ raiju/
 ├─ payload/          # raiju.elf: supervisor, gateway, processor, API
 │  ├─ src/
 │  ├─ processor/     # portable C11 pipeline stages; `make -C payload/processor test` runs host unit tests (needs libarchive and pkg-config), `make -C payload/processor sanitize` runs them under ASan and UBSan
-│  ├─ third_party/   # aria2 (fork), libarchive, openssl, zlib, zstd, xz, c-ares, civetweb
+│  ├─ gateway/       # portable C11 HTTP gateway + pairing; `make -C payload/gateway test` runs host unit and aria2 integration tests, `make -C payload/gateway sanitize` runs them under ASan and UBSan; embeds `ui/dist` (needs a local `aria2c` for the integration test)
+│  ├─ third_party/   # aria2 (fork), libarchive, openssl, zlib, zstd, xz, c-ares, civetweb (fetched and gitignored)
 │  └─ Makefile
 ├─ ui/               # Vite + React + shadcn SPA (shared by all clients)
 ├─ companion/        # Tauri 2 desktop app (Rust), wraps ui/ (M2)
