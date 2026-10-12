@@ -115,6 +115,12 @@ export type ApiProbe = {
 	freeBytes: number;
 };
 
+/** What `DELETE /api/jobs/:id` answers once the job has left the queue. */
+export type ApiRemovedJob = {
+	id: string;
+	removed: true;
+};
+
 /** A 409 from `POST /api/jobs`: the archive and its contents would not fit. */
 export type ApiNoSpace = {
 	error: "no_space";

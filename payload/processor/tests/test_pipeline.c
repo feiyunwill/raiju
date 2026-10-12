@@ -968,6 +968,11 @@ static void a_bad_image_fails_classification_and_discard_removes_it(void) {
 	CHECK_INT(processor.list.count, 0);
 	free(path);
 	raiju_processor_close(&processor);
+	raiju_processor reopened;
+	CHECK_INT(raiju_processor_open(&reopened, &w.pipeline, w.jobs), RAIJU_PROCESSOR_OK);
+	CHECK_INT(reopened.list.count, 0);
+	CHECK(raiju_processor_find(&reopened, JOB_ID) == NULL);
+	raiju_processor_close(&reopened);
 	world_close(&w);
 }
 

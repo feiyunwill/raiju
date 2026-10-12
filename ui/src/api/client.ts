@@ -5,6 +5,7 @@ import type {
 	ApiNewJob,
 	ApiPairing,
 	ApiProbe,
+	ApiRemovedJob,
 	ApiStatus,
 	ApiStorage,
 	ConflictChoice,
@@ -125,6 +126,11 @@ export function createRaijuClient(options: RaijuClientOptions = {}) {
 		retryJob: (id: string) =>
 			json<ApiJob>(`/api/jobs/${encodeURIComponent(id)}/retry`, {
 				method: "POST",
+			}),
+		/** The job leaves the queue: staging, trash and, unless it installed, its download go with it. */
+		removeJob: (id: string) =>
+			json<ApiRemovedJob>(`/api/jobs/${encodeURIComponent(id)}`, {
+				method: "DELETE",
 			}),
 		cancelJob: (id: string) =>
 			json<ApiJob>(`/api/jobs/${encodeURIComponent(id)}/cancel`, {

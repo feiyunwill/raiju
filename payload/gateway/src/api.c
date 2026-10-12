@@ -1275,6 +1275,49 @@ static int handle_jobs_resolve(const raiju_http_request *request, raiju_http_res
 	return 200;
 }
 
+/**
+ * Answers DELETE /api/jobs/:id. A job the processor is working on, or one the
+ * engine is still downloading, is refused with 409 wrong_stage: cancel first,
+ * which also stops an extraction in flight. Everything else is discarded, which
+ * deletes its staging and trash folders and, unless it already installed, its
+ * download — never anything under an install root.
+ */
+static int handle_jobs_delete(const raiju_http_request *request, raiju_http_response *response, void *context) {
+	raiju_api *api = context;
+	const char *id = request->param_count >= 1 ? request->params[0] : "";
+	pthread_mutex_lock(&api->queue_lock);
+	raiju_job *job = raiju_processor_find(&api->processor, id);
+	if (job == NULL) {
+		pthread_mutex_unlock(&api->queue_lock);
+		raiju_response_error(response, 404, "not found");
+		return 404;
+	}
+	if (job->stage == RAIJU_STAGE_DOWNLOADING || raiju_job_runnable(job)) {
+		pthread_mutex_unlock(&api->queue_lock);
+		raiju_response_error(response, 409, "wrong_stage");
+		return 409;
+	}
+	raiju_processor_status status = raiju_processor_discard(&api->processor, id);
+	publish_views(api, true);
+	pthread_mutex_unlock(&api->queue_lock);
+	if (status == RAIJU_PROCESSOR_NOT_FOUND) {
+		raiju_response_error(response, 404, "not found");
+		return 404;
+	}
+	if (status != RAIJU_PROCESSOR_OK) {
+		raiju_response_error(response, 500, raiju_processor_status_name(status));
+		return 500;
+	}
+	raiju_strbuf document;
+	raiju_strbuf_init(&document);
+	raiju_strbuf_append(&document, "{\"id\":");
+	raiju_strbuf_append_json_string(&document, id);
+	raiju_strbuf_append(&document, ",\"removed\":true}");
+	raiju_response_json(response, 200, raiju_strbuf_cstr(&document));
+	raiju_strbuf_free(&document);
+	return 200;
+}
+
 bool raiju_api_add_core_routes(raiju_gateway *gateway, raiju_api *api) {
 	const raiju_route routes[] = {
 	    {"GET", "/api/status", handle_status, api, false},
@@ -1298,6 +1341,7 @@ bool raiju_api_add_job_routes(raiju_gateway *gateway, raiju_api *api) {
 	    {"POST", "/api/jobs/:id/retry", handle_jobs_retry, api, true},
 	    {"POST", "/api/jobs/:id/cancel", handle_jobs_cancel, api, true},
 	    {"POST", "/api/jobs/:id/resolve", handle_jobs_resolve, api, true},
+	    {"DELETE", "/api/jobs/:id", handle_jobs_delete, api, true},
 	};
 	for (size_t i = 0; i < sizeof routes / sizeof routes[0]; i++) {
 		if (!raiju_gateway_add_route(gateway, &routes[i])) {

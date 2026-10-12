@@ -280,6 +280,82 @@ static void the_display_name_is_separate_from_the_source_name(void) {
 	raiju_strbuf_free(&document);
 }
 
+static void a_job_leaves_the_queue_only_when_it_is_not_running(void) {
+	raiju_fixture_server *server = raiju_fixture_server_start();
+	CHECK(server != NULL);
+	raiju_fixture_server_set_jsonrpc(server, "{\"jsonrpc\":\"2.0\",\"id\":\"raiju\",\"result\":\"gid-drop\"}");
+	char aria2_url[128];
+	snprintf(aria2_url, sizeof aria2_url, "http://127.0.0.1:%u/jsonrpc", raiju_fixture_server_port(server));
+	raiju_fake_platform fake;
+	char directory[1024];
+	raiju_gateway *gateway = make_gateway(&fake, aria2_url, directory, sizeof directory);
+	CHECK(gateway != NULL);
+	fake.free_bytes = 100ull * 1024 * 1024 * 1024;
+	char cookie[160];
+	pair_the_gateway(gateway, cookie, sizeof cookie);
+	raiju_http_request request;
+	raiju_http_response response;
+
+	const char *create = "{\"id\":\"gid-drop\",\"uri\":\"http://example/x.zip\",\"destination\":\"/data/homebrew\","
+	                     "\"kind\":\"zip\",\"size\":100000}";
+	memset(&request, 0, sizeof request);
+	request.method = "POST";
+	request.path = "/api/jobs";
+	request.cookie = cookie;
+	request.body = (const unsigned char *)create;
+	request.body_length = strlen(create);
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 201);
+	raiju_response_free(&response);
+
+	memset(&request, 0, sizeof request);
+	request.method = "DELETE";
+	request.path = "/api/jobs/gid-drop";
+	request.cookie = cookie;
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 409);
+	CHECK(strstr(raiju_strbuf_cstr(&response.body), "wrong_stage") != NULL);
+	raiju_response_free(&response);
+
+	memset(&request, 0, sizeof request);
+	request.method = "POST";
+	request.path = "/api/jobs/gid-drop/cancel";
+	request.cookie = cookie;
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 200);
+	CHECK(strstr(raiju_strbuf_cstr(&response.body), "\"stage\":\"cancelled\"") != NULL);
+	raiju_response_free(&response);
+
+	memset(&request, 0, sizeof request);
+	request.method = "DELETE";
+	request.path = "/api/jobs/gid-drop";
+	request.cookie = cookie;
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 200);
+	CHECK(strstr(raiju_strbuf_cstr(&response.body), "\"removed\":true") != NULL);
+	raiju_response_free(&response);
+
+	memset(&request, 0, sizeof request);
+	request.method = "GET";
+	request.path = "/api/jobs";
+	request.cookie = cookie;
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 200);
+	CHECK(strstr(raiju_strbuf_cstr(&response.body), "gid-drop") == NULL);
+	raiju_response_free(&response);
+
+	memset(&request, 0, sizeof request);
+	request.method = "DELETE";
+	request.path = "/api/jobs/gid-drop";
+	request.cookie = cookie;
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 404);
+	raiju_response_free(&response);
+
+	raiju_gateway_destroy(gateway);
+	raiju_test_rmtree(directory);
+}
+
 static void jobs_create_list_get_and_refuse(void) {
 	raiju_fixture_server *server = raiju_fixture_server_start();
 	CHECK(server != NULL);
@@ -407,8 +483,8 @@ static void every_new_endpoint_needs_a_token(void) {
 	char directory[1024];
 	raiju_gateway *gateway = make_gateway(&fake, "http://127.0.0.1:6800/jsonrpc", directory, sizeof directory);
 	CHECK(gateway != NULL);
-	const char *protected_paths[] = {"/api/storage", "/api/folders", "/api/jobs", "/api/jobs/x"};
-	const char *methods[] = {"GET", "GET", "GET", "GET"};
+	const char *protected_paths[] = {"/api/storage", "/api/folders", "/api/jobs", "/api/jobs/x", "/api/jobs/x"};
+	const char *methods[] = {"GET", "GET", "GET", "GET", "DELETE"};
 	for (size_t i = 0; i < sizeof protected_paths / sizeof protected_paths[0]; i++) {
 		raiju_http_request request;
 		memset(&request, 0, sizeof request);
@@ -546,6 +622,7 @@ void run_api_tests(void) {
 	RUN_TEST(the_stage_status_mapping_is_stable);
 	RUN_TEST(the_stage_total_tracks_the_running_stage);
 	RUN_TEST(the_display_name_is_separate_from_the_source_name);
+	RUN_TEST(a_job_leaves_the_queue_only_when_it_is_not_running);
 	RUN_TEST(jobs_create_list_get_and_refuse);
 	RUN_TEST(every_new_endpoint_needs_a_token);
 	RUN_TEST(jobs_reads_never_wait_for_the_queue);

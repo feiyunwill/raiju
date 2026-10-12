@@ -73,6 +73,14 @@ describe("createRaijuClient", () => {
 		expect(bodyOf(stub.calls[0])).toEqual({ choice: "rename" });
 	});
 
+	test("removes a job with DELETE on its own endpoint", async () => {
+		const stub = fetchStub(() => json({ id: "gid1", removed: true }));
+		const client = createRaijuClient({ fetch: stub.fetch });
+		await client.removeJob("gid1");
+		expect(stub.calls[0].url).toBe("/api/jobs/gid1");
+		expect(stub.calls[0].init?.method).toBe("DELETE");
+	});
+
 	test("toggles a power option on its own endpoint", async () => {
 		const stub = fetchStub(() => json({ keepAwake: true }));
 		const client = createRaijuClient({ fetch: stub.fetch });

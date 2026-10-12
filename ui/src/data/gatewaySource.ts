@@ -218,9 +218,7 @@ export function createGatewaySource(options: {
 	}
 
 	async function applyJobs(apiJobs: ApiJob[]): Promise<void> {
-		const jobs = apiJobs
-			.filter((job) => job.stage !== "cancelled")
-			.map((job) => apiJobToJob(job, liveFigures(job)));
+		const jobs = apiJobs.map((job) => apiJobToJob(job, liveFigures(job)));
 		const now = Date.now();
 		const downloadSpeed = jobs
 			.filter((job) => job.status === "active" && job.stage === "download")
@@ -369,16 +367,27 @@ export function createGatewaySource(options: {
 	}
 
 	/**
-	 * Cancelling is the authoritative step: a failure there is reported and the job stays put. The
-	 * engine cleanup behind it is best effort, because a job that never reached the engine is normal.
+	 * Removing is the endpoint's job: it deletes the job's staging and trash folders and, unless it
+	 * already installed, its download. A job the processor is still working on is refused, so it is
+	 * cancelled first, which also stops a stage in flight. The engine cleanup behind that is best
+	 * effort, because a job that never reached the engine is normal.
 	 */
 	async function removeJob(id: string): Promise<void> {
 		try {
-			await client.cancelJob(id);
+			await client.removeJob(id);
 		} catch (error) {
+			const refused = error instanceof RaijuApiError && error.status === 409;
 			const alreadyGone =
 				error instanceof RaijuApiError && error.status === 404;
-			if (!alreadyGone) {
+			if (refused) {
+				await client.cancelJob(id).catch(() => undefined);
+				try {
+					await client.removeJob(id);
+				} catch (retryError) {
+					set({ ...state, notice: actionError(retryError) });
+					return;
+				}
+			} else if (!alreadyGone) {
 				set({ ...state, notice: actionError(error) });
 				return;
 			}
