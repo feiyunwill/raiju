@@ -11,7 +11,7 @@ flowchart TB
     end
 
     subgraph PS5["PS5 · raiju.elf"]
-        Gateway["Gateway (HTTP :8080)<br/>/ · /jsonrpc · /api/*"]
+        Gateway["Gateway (HTTP :2997)<br/>/ · /jsonrpc · /api/*"]
         Engine["Engine: aria2<br/>RPC on 127.0.0.1:6800"]
         Processor["Processor<br/>verify → extract → atomic install"]
         Supervisor["Supervisor<br/>privileges · session · keep-awake · notifications"]
@@ -38,7 +38,7 @@ Single ELF, sent through the existing ELF loader (port 9021).
 **Supervisor**
 - Runs with the privileges the loader grants, and owns no kernel state it did not create (ADR 0006). Measured on firmware 13600007 (#2, #46): the loader starts a payload with `euid 0` and no jail (`jaildir 0`), and that context alone creates the data root, writes and renames a staging file, takes the lock and reads `/data` space — so Raiju takes no credentials and borrows no jail. Escalation stays out until an operation is proven to need it, and then only in the narrowest step that works, recorded with its measurement and reverted on every exit path.
 - Creates `/data/raiju/{downloads,staging,trash,session,www}` on first run.
-- Starts the engine and gateway, and shows a PS5 notification: `Raiju ready — http://<ip>:8080 · code 4821`.
+- Starts the engine and gateway, and shows a PS5 notification: `Raiju ready — http://<ip>:2997 · code 4821`.
 - Single-instance guard: if Raiju is already running, the new copy exits and re-shows the notification. An `flock` on `/data/raiju/session/raiju.lock` answers that, and the second launch is refused with `EWOULDBLOCK` (#2).
 - Ends through `payload_exit()`. Returning from `main` hands the hijacked process back to its C++ teardown, which dies with an uncaught `system_error` a few milliseconds later (#2).
 
@@ -141,8 +141,9 @@ Libraries: libarchive (BSD), built with zstd, xz/lzma, zlib and bzip2. The M0 be
 The gateway lives in `payload/gateway` and builds and tests on macOS and Linux with its own host Makefile (`make -C payload/gateway test`, `sanitize`), independent of the PS5 SDK. It is organised as:
 
 - `include/raiju/*.h` public headers; `src/` implementations; `tests/` with a tiny harness and a real integration test.
-- `platform.h` + `src/platform_host.c`: every PS5-only call (notifications, privilege escalation, `statfs`, interface IP, firmware version, engine launch, RNG) sits behind this one interface so the host build substitutes fakes. **The PS5 implementation lands with the payload build (#1); this issue ships only the host implementation.**
-- `supervisor.c`: creates `/data/raiju/{downloads,staging,trash,session,www}`, takes the single-instance lock, generates the pairing code, writes `session/aria2.conf` and `session/aria2.secret`, starts the engine and shows the ready notification.
+- `platform.h` + `src/platform_host.c` + `src/platform_ps5.c`: every console-only call (notifications, privilege escalation, disk usage, interface IP, firmware version, engine launch, RNG, CA bundle) sits behind this one interface, so the host build substitutes fakes and the ELF uses the console one (#32). This is what `GET /api/status`'s `"platform"` reports, through the gateway's `platform_name`. The console implementation raises toasts through the system service with the message JSON-escaped and truncated, reads space through `statfs` (not `statvfs`), finds the LAN address with `getifaddrs` skipping loopback and link-local, reports the firmware the kernel gives (`13.60` for `0x13600007`), takes randomness from the libc CSPRNG, starts the engine in-process, and names `/data/raiju/ca.pem`, which the payload installs from the embedded bundle on first run. **Escalation stays a no-op:** #2 and #46 measured that the loader's context already writes the data root, so the hook is there to be measured on a console, not used (ADR 0006).
+- The console build (`payload/Makefile`) compiles these same sources for the SDK's FreeBSD target, with the processor, CivetWeb, `third_party/ps5/ca_bundle.c`, the generated asset table and the embedded engine (`src/engine_ps5.cpp`), and links `libaria2` with OpenSSL, libarchive and its decoders. `-D__BSD_VISIBLE=1` is what the console's headers need to expose the BSD surface the shared sources use (`flock`, `u_int`, `INADDR_LOOPBACK`) — `_POSIX_C_SOURCE` hides it there, where Darwin exposes the same surface through `_DARWIN_C_SOURCE`.
+- `supervisor.c`: creates `/data/raiju/{downloads,staging,trash,session,www}`, takes the single-instance lock, generates the pairing code, writes `session/aria2.conf` and `session/aria2.secret`, starts the engine and shows the ready notification. A second copy that cannot take the lock asks the running instance on loopback for its code (`GET /api/pairing/code`, authenticated with the engine secret both copies read from `session/aria2.secret`) and re-shows the notification with it, falling back to `----` when nothing answers (#32).
 - `engine_options.c`: renders the aria2 options from the tuning table below (RPC on loopback, session persistence) and persists the secret atomically.
 - `assets.c` + `tools/gen_assets.c`: a build-time tool walks an embed directory (`ui/dist` by default, overridable with `EMBED_DIR`) and emits a `{path, bytes}` table; an absent directory yields an empty table. `www` wins over the embedded table.
 - `proxy.c`: secret injection and a minimal loopback HTTP client; `server.c` adapts CivetWeb, bridges the `/jsonrpc` WebSocket to aria2's, and hands the `aria2.onDownloadComplete`/`onDownloadError` notification frames to the gateway.
@@ -167,8 +168,9 @@ The gateway lives in `payload/gateway` and builds and tests on macOS and Linux w
 | `GET /api/art/:id` | token | Cover art for a title ID from OrbisPatches/ProsperoPatches |
 | `POST /api/power/keep-awake`, `POST /api/power/notifications` | token | Toggle a payload power option; body `{"on":bool}` (#18) |
 | `POST /api/pair`, `DELETE /api/devices/:id` | mixed | Pairing and device token management |
+| `GET /api/pairing/code` | loopback + engine secret | The running instance's pairing code, for a second copy of the payload re-showing the "already running" notification (#32) |
 
-Every endpoint but `GET /api/status` needs a device token (cookie or `Authorization: Bearer`).
+Every endpoint but `GET /api/status` needs a device token (cookie or `Authorization: Bearer`). `GET /api/pairing/code` is refused with 403 unless the peer is loopback *and* the request carries the engine secret: the copy asking has no token yet, and that secret is the one credential both copies already share on disk.
 
 **Shapes.**
 
@@ -206,7 +208,7 @@ Every endpoint but `GET /api/status` needs a device token (cookie or `Authorizat
   - Polling: `/api/jobs` once per second while the window is visible, `/api/status` every two seconds until the console answers, storage every ten seconds, and `/api/folders` once per connection. `aria2.onDownloadStart/Pause/Complete/Error` events over the WebSocket trigger an immediate refetch.
   - `GET /api/status` is public, so the UI separates "console off" from "not paired yet": a refused connection shows the unreachable screen with background retries, a 401 shows the pairing screen.
   - `VITE_DEMO=true`, or a plain dev server with no gateway, uses the simulated source in `ui/src/data/mockSource.ts`, so the UI works without a console.
-- **Working against a console in development:** start the dev server with `VITE_GATEWAY_URL=http://<ps5>:8080`; the Vite config proxies `/api` and `/jsonrpc` to the console, so the `raiju_device` cookie stays first-party.
+- **Working against a console in development:** start the dev server with `VITE_GATEWAY_URL=http://<ps5>:2997`; the Vite config proxies `/api` and `/jsonrpc` to the console, so the `raiju_device` cookie stays first-party.
 - **Budget:** ≤ 300 KB gzipped total, since it's embedded in the ELF.
 - Design system and screens: see [DESIGN.md](DESIGN.md).
 
@@ -214,7 +216,7 @@ Every endpoint but `GET /api/status` needs a device token (cookie or `Authorizat
 
 - **Tauri 2:** a Rust backend with the same `ui/` web app as its front end, so the UI stays identical on every platform. It builds for macOS, Windows and Linux with small native binaries (no bundled Chromium).
 - **The Rust backend does what a browser can't:**
-  - **Discovery:** scan the local subnet for the Raiju gateway (`GET /api/status` on port 8080). Later: mDNS, if the PS5 side supports it.
+  - **Discovery:** scan the local subnet for the Raiju gateway (`GET /api/status` on port 2997). Later: mDNS, if the PS5 side supports it.
   - **Payload send:** push `raiju.elf` (bundled with the app) to the ELF loader on TCP 9021. Detect "PS5 reachable but Raiju not running" and offer to send it.
   - **Tray and notifications:** menu-bar/tray speed readout, and native notifications on job completion.
   - **Wake (M3):** the Remote Play wake packet.
@@ -222,7 +224,7 @@ Every endpoint but `GET /api/status` needs a device token (cookie or `Authorizat
 
 ### 4. Browser extension (`extension/`, M2)
 
-A Manifest V3 extension that intercepts downloads and sends them to `http://<ps5>:8080/jsonrpc` with the device token. Until M2, the existing "Aria2 Integration" extension works pointed at the gateway.
+A Manifest V3 extension that intercepts downloads and sends them to `http://<ps5>:2997/jsonrpc` with the device token. Until M2, the existing "Aria2 Integration" extension works pointed at the gateway.
 
 ## Speed: how Raiju matches Motrix
 

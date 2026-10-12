@@ -26,11 +26,7 @@ endif
 TEST_FIXTURE_DIR := $(abspath tests/fixtures)
 CPPFLAGS += -DRAIJU_TEST_FIXTURE_DIR=\"$(TEST_FIXTURE_DIR)\"
 
-CIVETWEB_VERSION := 1.16
-CIVETWEB_DIR := ../third_party/civetweb
-CIVETWEB_URL := https://github.com/civetweb/civetweb/archive/refs/tags/v$(CIVETWEB_VERSION).tar.gz
-CIVETWEB_SHA256 := f0e471c1bf4e7804a6cfb41ea9d13e7d623b2bcc7bc1e2a4dd54951a24d60285
-CIVETWEB_ARCHIVE := $(CIVETWEB_DIR)/civetweb-$(CIVETWEB_VERSION).tar.gz
+include ../third_party/civetweb.mk
 
 EMBED_DIR ?= $(abspath ../../ui/dist)
 FIXTURE_EMBED := tests/fixtures/embed
@@ -57,7 +53,8 @@ CORE_SOURCES := \
 	src/sevenz.c \
 	src/supervisor.c \
 	src/http.c \
-	src/gateway.c
+	src/gateway.c \
+	src/local_code.c
 SERVER_SOURCES := src/server.c
 MAIN_SOURCES := src/main.c
 TEST_SOURCES := $(wildcard tests/test_*.c)
@@ -150,16 +147,6 @@ $(CIVETWEB_OBJECT): $(CIVETWEB_DIR)/civetweb.c $(CIVETWEB_DIR)/civetweb.h
 	$(CC) -O2 -DNO_SSL -DNO_CGI -DUSE_WEBSOCKET -I$(CIVETWEB_DIR) -c -o $@ $(CIVETWEB_DIR)/civetweb.c
 
 $(SERVER_OBJECT): $(CIVETWEB_DIR)/civetweb.h
-
-$(CIVETWEB_DIR)/civetweb.c:
-	@mkdir -p $(CIVETWEB_DIR)
-	curl -fsSL -o $(CIVETWEB_ARCHIVE) $(CIVETWEB_URL)
-	echo "$(CIVETWEB_SHA256)  $(CIVETWEB_ARCHIVE)" | shasum -a 256 -c -
-	tar -xzf $(CIVETWEB_ARCHIVE) -C $(CIVETWEB_DIR) --strip-components=2 \
-	    civetweb-$(CIVETWEB_VERSION)/src civetweb-$(CIVETWEB_VERSION)/include
-	rm -f $(CIVETWEB_ARCHIVE)
-
-$(CIVETWEB_DIR)/civetweb.h: $(CIVETWEB_DIR)/civetweb.c
 
 clean:
 	rm -rf $(BUILD)

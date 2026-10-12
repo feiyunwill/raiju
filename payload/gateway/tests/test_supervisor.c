@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 
 #include "fake_platform.h"
+#include "fixture_server.h"
 #include "raiju/supervisor.h"
 #include "test.h"
 
@@ -69,8 +70,36 @@ static void announce_and_launch_use_the_platform(void) {
 	raiju_test_rmtree(directory);
 }
 
+static void the_running_copy_asks_the_instance_for_its_code(void) {
+	char directory[1024];
+	CHECK_INT(raiju_test_tmpdir(directory, sizeof directory, "running"), 0);
+	raiju_fake_platform fake;
+	const raiju_platform *platform = raiju_fake_platform_init(&fake);
+	raiju_supervisor first;
+	CHECK_INT(raiju_supervisor_prepare(&first, platform, directory), RAIJU_SUPERVISOR_OK);
+	raiju_fixture_server *server = raiju_fixture_server_start();
+	CHECK(server != NULL);
+	const char *document = "{\"code\":\"4821\"}";
+	CHECK(raiju_fixture_server_add_file(server, "/api/pairing/code", document, strlen(document)));
+	uint16_t port = raiju_fixture_server_port(server);
+
+	raiju_supervisor second;
+	CHECK_INT(raiju_supervisor_prepare(&second, platform, directory), RAIJU_SUPERVISOR_ALREADY_RUNNING);
+	CHECK_INT(raiju_supervisor_announce_running(&second, "10.0.0.5", port), RAIJU_SUPERVISOR_OK);
+	CHECK(strstr(fake.notification, "http://10.0.0.5:") != NULL);
+	CHECK(strstr(fake.notification, "code 4821") != NULL);
+
+	raiju_fixture_server_stop(server);
+	CHECK_INT(raiju_supervisor_announce_running(&second, "10.0.0.5", port), RAIJU_SUPERVISOR_OK);
+	CHECK(strstr(fake.notification, "code ----") != NULL);
+
+	raiju_supervisor_close(&first);
+	raiju_test_rmtree(directory);
+}
+
 void run_supervisor_tests(void) {
 	RUN_TEST(prepare_creates_directories);
 	RUN_TEST(single_instance_guard);
 	RUN_TEST(announce_and_launch_use_the_platform);
+	RUN_TEST(the_running_copy_asks_the_instance_for_its_code);
 }

@@ -13,6 +13,7 @@
 #include "raiju/assets.h"
 #include "raiju/auth.h"
 #include "raiju/fsutil.h"
+#include "raiju/local_code.h"
 
 #define RAIJU_STATIC_MAX (16u * 1024u * 1024u)
 
@@ -238,6 +239,7 @@ static int handle_jsonrpc(const raiju_http_request *request, raiju_http_response
 static bool register_default_routes(raiju_gateway *gateway) {
 	const raiju_route routes[] = {
 	    {"POST", "/api/pair", handle_pair, gateway, false},
+	    {"GET", "/api/pairing/code", raiju_local_code_handler, gateway, false},
 	    {"GET", "/api/devices", handle_devices_list, gateway, true},
 	    {"DELETE", "/api/devices/:id", handle_device_delete, gateway, true},
 	    {"POST", "/jsonrpc", handle_jsonrpc, gateway, true},

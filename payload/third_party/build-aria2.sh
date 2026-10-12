@@ -117,7 +117,9 @@ build_upstream_aria2() {
 
 # Builds the motrixapp fork the same way, into its own prefix beside the upstream one. The fork's
 # archive is a source tree without generated build files, so its configure script has to be made,
-# which is why autotools is needed for this one and not for the upstream release tarball.
+# which is why autotools is needed for this one and not for the upstream release tarball. Only the
+# #4 benchmark compares against it, so it is built when RAIJU_MOTRIX_BENCHMARK=1: the console links
+# the upstream library alone.
 build_motrix_aria2() {
 	motrix_prefix="$prefix/motrix"
 
@@ -149,11 +151,15 @@ check_dependencies
 
 fetch "https://github.com/aria2/aria2/releases/download/release-$ARIA2_VERSION/aria2-$ARIA2_VERSION.tar.gz" \
 	"$cache/aria2-$ARIA2_VERSION.tar.gz" "$ARIA2_SHA256"
-fetch "https://github.com/motrixapp/aria2/archive/refs/tags/$MOTRIX_TAG.tar.gz" \
-	"$cache/aria2-$MOTRIX_TAG.tar.gz" "$MOTRIX_SHA256"
 
 build_upstream_aria2
-build_motrix_aria2
 
 echo "prefix: $prefix"
-ls -l "$prefix/bin/aria2c" "$prefix/motrix/bin/aria2c"
+ls -l "$prefix/bin/aria2c"
+
+if [ "${RAIJU_MOTRIX_BENCHMARK:-0}" = "1" ]; then
+	fetch "https://github.com/motrixapp/aria2/archive/refs/tags/$MOTRIX_TAG.tar.gz" \
+		"$cache/aria2-$MOTRIX_TAG.tar.gz" "$MOTRIX_SHA256"
+	build_motrix_aria2
+	ls -l "$prefix/motrix/bin/aria2c"
+fi

@@ -758,7 +758,8 @@ static int handle_status(const raiju_http_request *request, raiju_http_response 
 	raiju_strbuf_append(&document, ",\"firmware\":");
 	raiju_strbuf_append_json_string(&document, firmware);
 	raiju_strbuf_append(&document, ",\"platform\":");
-	raiju_strbuf_append_json_string(&document, platform == raiju_platform_host() ? "host" : "ps5");
+	raiju_strbuf_append_json_string(&document,
+	                                gateway->config.platform_name != NULL ? gateway->config.platform_name : "host");
 	raiju_strbuf_append(&document, ",\"ip\":");
 	raiju_strbuf_append_json_string(&document, address);
 	raiju_strbuf_append(&document, ",\"engine\":{");

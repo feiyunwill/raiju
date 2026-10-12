@@ -53,9 +53,10 @@ int main(int argc, char **argv) {
 	raiju_gateway_config config;
 	memset(&config, 0, sizeof config);
 	config.platform = platform;
-	config.port = 8080;
+	config.port = 2997;
 	config.data_dir = "/data/raiju";
 	config.aria2_url = "http://127.0.0.1:6800/jsonrpc";
+	config.platform_name = "host";
 	const char *secret = NULL;
 	const char *engine_command = "aria2c";
 	bool run_engine = true;
@@ -97,7 +98,7 @@ int main(int argc, char **argv) {
 	if (prepared == RAIJU_SUPERVISOR_ALREADY_RUNNING) {
 		char address[64];
 		platform->interface_ip(platform->ctx, address, sizeof address);
-		raiju_supervisor_announce(&supervisor, address, config.port, "----");
+		raiju_supervisor_announce_running(&supervisor, address, config.port);
 		fprintf(stderr, "raiju-gateway: already running\n");
 		return 1;
 	}

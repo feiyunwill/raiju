@@ -278,6 +278,7 @@ static int begin_request(struct mg_connection *conn) {
 	request.cookie = mg_get_header(conn, "Cookie");
 	request.authorization = mg_get_header(conn, "Authorization");
 	request.content_type = mg_get_header(conn, "Content-Type");
+	request.peer_address = info->remote_addr;
 
 	raiju_http_response response;
 	raiju_response_init(&response);

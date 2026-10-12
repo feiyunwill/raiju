@@ -615,6 +615,49 @@ static void jobs_reads_never_wait_for_the_queue(void) {
 	raiju_fixture_server_stop(server);
 }
 
+static void the_pairing_code_is_loopback_only(void) {
+	raiju_fake_platform fake;
+	char directory[1024];
+	raiju_gateway *gateway = make_gateway(&fake, "http://127.0.0.1:6800/jsonrpc", directory, sizeof directory);
+	CHECK(gateway != NULL);
+	const char *secret = "0123456789abcdef0123456789abcdef0123456789abcdef";
+	snprintf(gateway->secret, sizeof gateway->secret, "%s", secret);
+	raiju_http_request request;
+	raiju_http_response response;
+
+	memset(&request, 0, sizeof request);
+	request.method = "GET";
+	request.path = "/api/pairing/code";
+	request.peer_address = "127.0.0.1";
+	request.authorization = "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef";
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 200);
+	CHECK(strstr(raiju_strbuf_cstr(&response.body), gateway->pairing.code) != NULL);
+	raiju_response_free(&response);
+
+	memset(&request, 0, sizeof request);
+	request.method = "GET";
+	request.path = "/api/pairing/code";
+	request.peer_address = "192.168.1.50";
+	request.authorization = "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef";
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 403);
+	raiju_response_free(&response);
+
+	memset(&request, 0, sizeof request);
+	request.method = "GET";
+	request.path = "/api/pairing/code";
+	request.peer_address = "127.0.0.1";
+	request.authorization = "Bearer wrong";
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 403);
+	CHECK(strstr(raiju_strbuf_cstr(&response.body), gateway->pairing.code) == NULL);
+	raiju_response_free(&response);
+
+	raiju_gateway_destroy(gateway);
+	raiju_test_rmtree(directory);
+}
+
 void run_api_tests(void) {
 	RUN_TEST(status_is_public_and_reports_engine);
 	RUN_TEST(storage_reports_the_platform_figures);
@@ -626,4 +669,5 @@ void run_api_tests(void) {
 	RUN_TEST(jobs_create_list_get_and_refuse);
 	RUN_TEST(every_new_endpoint_needs_a_token);
 	RUN_TEST(jobs_reads_never_wait_for_the_queue);
+	RUN_TEST(the_pairing_code_is_loopback_only);
 }

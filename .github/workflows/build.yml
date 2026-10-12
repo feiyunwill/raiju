@@ -71,6 +71,10 @@ jobs:
         env:
           PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk
         run: sh payload/third_party/build-libarchive.sh
+      - name: Build aria2 and libaria2 for the console
+        env:
+          PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk
+        run: sh payload/third_party/build-aria2.sh
       - name: Build raiju.elf
         env:
           PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk

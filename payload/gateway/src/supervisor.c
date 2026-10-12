@@ -3,11 +3,21 @@
 
 #include "raiju/supervisor.h"
 
+#include <arpa/inet.h>
 #include <fcntl.h>
+#include <netinet/in.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
+#include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
+
+#include "raiju/pairing.h"
+
+#define RAIJU_RUNNING_CODE_PATH "/api/pairing/code"
+#define RAIJU_RUNNING_CODE_TIMEOUT_SECONDS 2
 
 static bool make_directory(const char *path) {
 	return raiju_mkdir_p(path);
@@ -90,6 +100,99 @@ raiju_supervisor_status raiju_supervisor_announce(const raiju_supervisor *superv
 		return RAIJU_SUPERVISOR_IO_ERROR;
 	}
 	return RAIJU_SUPERVISOR_OK;
+}
+
+/**
+ * Reads the engine secret the running copy authenticates with, from the path
+ * both copies share on disk.
+ */
+static bool read_engine_secret(const raiju_supervisor *supervisor, char *out, size_t capacity) {
+	size_t length = 0;
+	size_t trimmed = 0;
+	char *contents = raiju_read_file(supervisor->secret_path, 256, &length);
+
+	if (contents == NULL) {
+		return false;
+	}
+	while (trimmed < length && contents[trimmed] != '\n' && contents[trimmed] != '\r') {
+		trimmed++;
+	}
+	contents[trimmed] = '\0';
+	snprintf(out, capacity, "%s", contents);
+	free(contents);
+	return out[0] != '\0';
+}
+
+/** Asks the running instance on loopback for the code it is showing. */
+static bool request_running_code(uint16_t port, const char *secret, char *code, size_t capacity) {
+	struct sockaddr_in address;
+	struct timeval timeout;
+	char request[512];
+	char response[1024];
+	const char *found;
+	size_t received = 0;
+	size_t written = 0;
+	int status = 0;
+	int fd = socket(AF_INET, SOCK_STREAM, 0);
+
+	if (fd < 0) {
+		return false;
+	}
+	memset(&address, 0, sizeof address);
+	address.sin_family = AF_INET;
+	address.sin_port = htons(port);
+	address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	timeout.tv_sec = RAIJU_RUNNING_CODE_TIMEOUT_SECONDS;
+	timeout.tv_usec = 0;
+	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+	setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
+	if (connect(fd, (struct sockaddr *)&address, sizeof address) != 0) {
+		close(fd);
+		return false;
+	}
+	snprintf(request, sizeof request,
+	         "GET %s HTTP/1.1\r\nHost: 127.0.0.1:%u\r\nAuthorization: Bearer %s\r\nConnection: close\r\n\r\n",
+	         RAIJU_RUNNING_CODE_PATH, (unsigned)port, secret);
+	if (send(fd, request, strlen(request), 0) < 0) {
+		close(fd);
+		return false;
+	}
+	while (received + 1 < sizeof response) {
+		ssize_t got = recv(fd, response + received, sizeof response - received - 1, 0);
+		if (got <= 0) {
+			break;
+		}
+		received += (size_t)got;
+	}
+	response[received] = '\0';
+	close(fd);
+	if (sscanf(response, "HTTP/%*s %d", &status) != 1 || status != 200) {
+		return false;
+	}
+	found = strstr(response, "\"code\":\"");
+	if (found == NULL) {
+		return false;
+	}
+	found += strlen("\"code\":\"");
+	while (written + 1 < capacity && found[written] != '\0' && found[written] != '"') {
+		code[written] = found[written];
+		written++;
+	}
+	code[written] = '\0';
+	return written > 0;
+}
+
+raiju_supervisor_status raiju_supervisor_announce_running(const raiju_supervisor *supervisor, const char *address,
+                                                          uint16_t port) {
+	char secret[RAIJU_ENGINE_SECRET_HEX + 1];
+	char code[RAIJU_PAIR_CODE_DIGITS + 1];
+	const char *shown = "----";
+
+	if (read_engine_secret(supervisor, secret, sizeof secret) &&
+	    request_running_code(port, secret, code, sizeof code)) {
+		shown = code;
+	}
+	return raiju_supervisor_announce(supervisor, address, port, shown);
 }
 
 void raiju_supervisor_close(raiju_supervisor *supervisor) {

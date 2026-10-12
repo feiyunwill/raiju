@@ -13,7 +13,8 @@
  * One parsed request, independent of the server library so handlers and
  * tests share the same shape. body, query and header values point into the
  * server's buffers and live only for the call; matched path parameters are
- * copied into param_values.
+ * copied into param_values. peer_address is the address the server saw the
+ * request come from, or NULL when a caller builds a request without a socket.
  */
 typedef struct {
 	const char *method;
@@ -22,6 +23,7 @@ typedef struct {
 	const char *cookie;
 	const char *authorization;
 	const char *content_type;
+	const char *peer_address;
 	const unsigned char *body;
 	size_t body_length;
 	const char *params[RAIJU_HTTP_MAX_PARAMS];

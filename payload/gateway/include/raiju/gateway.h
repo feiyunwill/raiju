@@ -21,7 +21,8 @@ struct raiju_api;
  * caller reads back; bind_address NULL uses "0.0.0.0"; www_dir NULL defaults
  * to <data_dir>/www, and that directory overrides the embedded table whenever
  * the file asked for exists there. fetch NULL uses the built-in client;
- * install_root NULL defaults to /data/homebrew.
+ * install_root NULL defaults to /data/homebrew; platform_name labels the
+ * build in /api/status and defaults to "host".
  */
 typedef struct {
 	const raiju_platform *platform;
@@ -32,6 +33,7 @@ typedef struct {
 	const char *aria2_url;
 	const char *secret;
 	const char *install_root;
+	const char *platform_name;
 	raiju_fetch_fn fetch;
 	void *fetch_context;
 	size_t max_body_bytes;

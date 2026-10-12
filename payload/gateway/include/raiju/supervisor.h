@@ -60,6 +60,15 @@ raiju_supervisor_status raiju_supervisor_announce(const raiju_supervisor *superv
                                                   uint16_t port, const char *code);
 
 /**
+ * Announces the "already running" notice for a copy that could not take the
+ * lock. It asks the running instance on loopback for its pairing code,
+ * authenticating with the engine secret both copies read from disk, and
+ * falls back to "----" when the instance does not answer.
+ */
+raiju_supervisor_status raiju_supervisor_announce_running(const raiju_supervisor *supervisor, const char *address,
+                                                          uint16_t port);
+
+/**
  * Shows the "already running" notification, then releases the lock.
  */
 void raiju_supervisor_close(raiju_supervisor *supervisor);
