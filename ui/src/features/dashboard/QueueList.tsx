@@ -22,10 +22,16 @@ import type { DashboardActions, Job, JobStatus } from "@/data/types";
 import { formatBytes } from "@/lib/format";
 import { ConflictPrompt } from "./ConflictPrompt";
 import { JobKindBadge } from "./JobKindBadge";
-import { jobEta, jobHasConflict, jobStatusLine } from "./jobText";
+import {
+	jobEta,
+	jobHasConflict,
+	jobNeedsTitleId,
+	jobStatusLine,
+} from "./jobText";
 import { StageProgress } from "./StageProgress";
 import { StageStepper } from "./StageStepper";
 import { TitleArt } from "./TitleArt";
+import { TitleIdPrompt } from "./TitleIdPrompt";
 
 type Tab = "active" | "waiting" | "done" | "failed";
 
@@ -178,6 +184,8 @@ function JobRow({
 				)}
 				{conflict ? (
 					<ConflictPrompt job={job} onResolve={actions.resolveConflict} />
+				) : jobNeedsTitleId(job) ? (
+					<TitleIdPrompt job={job} onSubmit={actions.resolveTitle} />
 				) : (
 					<p
 						className={cn(

@@ -1401,6 +1401,53 @@ bool raiju_api_add_core_routes(raiju_gateway *gateway, raiju_api *api) {
 	return true;
 }
 
+/**
+ * Answers POST /api/jobs/:id/title, the one thing a client can do for a job
+ * that is waiting for a title ID: hand it one, which lets the job name its
+ * payload and install it. The ID is validated here so a malformed one never
+ * reaches the queue, and a job in any other stage is refused the way the
+ * conflict endpoint refuses one.
+ */
+static int handle_jobs_title(const raiju_http_request *request, raiju_http_response *response, void *context) {
+	raiju_api *api = context;
+	const char *id = request->param_count >= 1 ? request->params[0] : "";
+	char title_id[RAIJU_TITLE_ID_LEN + 1];
+	if (!json_string((const char *)request->body, request->body_length, "titleId", title_id, sizeof title_id) ||
+	    !raiju_title_id_valid(title_id)) {
+		raiju_response_error(response, 400, "invalid");
+		return 400;
+	}
+	pthread_mutex_lock(&api->queue_lock);
+	raiju_processor_status status = raiju_processor_set_title_id(&api->processor, id, title_id);
+	raiju_job *job = raiju_processor_find(&api->processor, id);
+	publish_views(api, true);
+	raiju_strbuf document;
+	raiju_strbuf_init(&document);
+	if (job != NULL) {
+		raiju_api_job_json(&document, job);
+	}
+	pthread_mutex_unlock(&api->queue_lock);
+	wake_worker(api);
+	if (status == RAIJU_PROCESSOR_NOT_FOUND) {
+		raiju_strbuf_free(&document);
+		raiju_response_error(response, 404, "not found");
+		return 404;
+	}
+	if (status == RAIJU_PROCESSOR_WRONG_STAGE) {
+		raiju_strbuf_free(&document);
+		raiju_response_error(response, 409, "wrong_stage");
+		return 409;
+	}
+	if (status != RAIJU_PROCESSOR_OK) {
+		raiju_strbuf_free(&document);
+		raiju_response_error(response, 400, "invalid");
+		return 400;
+	}
+	raiju_response_json(response, 200, raiju_strbuf_cstr(&document));
+	raiju_strbuf_free(&document);
+	return 200;
+}
+
 bool raiju_api_add_job_routes(raiju_gateway *gateway, raiju_api *api) {
 	const raiju_route routes[] = {
 	    {"GET", "/api/jobs", handle_jobs_list, api, true},
@@ -1409,6 +1456,7 @@ bool raiju_api_add_job_routes(raiju_gateway *gateway, raiju_api *api) {
 	    {"POST", "/api/jobs/:id/retry", handle_jobs_retry, api, true},
 	    {"POST", "/api/jobs/:id/cancel", handle_jobs_cancel, api, true},
 	    {"POST", "/api/jobs/:id/resolve", handle_jobs_resolve, api, true},
+	    {"POST", "/api/jobs/:id/title", handle_jobs_title, api, true},
 	    {"DELETE", "/api/jobs/:id", handle_jobs_delete, api, true},
 	};
 	for (size_t i = 0; i < sizeof routes / sizeof routes[0]; i++) {

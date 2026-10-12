@@ -620,6 +620,12 @@ export function createGatewaySource(options: {
 					.then(() => refresh())
 					.catch((error) => set({ ...state, notice: actionError(error) }));
 			},
+			resolveTitle: (id, titleId) => {
+				client
+					.titleJob(id, titleId)
+					.then(() => refresh())
+					.catch((error) => set({ ...state, notice: actionError(error) }));
+			},
 			probe: async (uri) => {
 				try {
 					return probeSummary(await client.probe(uri));

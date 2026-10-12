@@ -214,6 +214,15 @@ export function createMockSource(): DashboardSource {
 										: job,
 								),
 				}),
+			resolveTitle: (id, titleId) =>
+				set({
+					...state,
+					jobs: state.jobs.map((job) =>
+						job.id === id
+							? { ...job, status: "active", stage: "install", titleId }
+							: job,
+					),
+				}),
 			probe: async (uri) => demoVerdict(uri, state.storage?.freeBytes ?? 0),
 			pair: async (code) => {
 				if (!/^\d{4}$/.test(code)) {

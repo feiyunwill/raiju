@@ -154,6 +154,8 @@ export type DashboardActions = {
 	loadDetail: (id: string) => Promise<JobDetail | null>;
 	/** Answers a name-conflict prompt and lets the job carry on. */
 	resolveConflict: (id: string, choice: ConflictChoice) => void;
+	/** Names a job whose dump carried no title ID, so it can install. */
+	resolveTitle: (id: string, titleId: string) => void;
 	/** One URL at a time; null while the verdict is unknown. */
 	probe: (uri: string) => Promise<ProbeVerdict | null>;
 	/** Exchanges the code shown on the PS5 for a device token. True once paired. */

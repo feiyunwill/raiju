@@ -723,6 +723,115 @@ static void a_torrent_becomes_a_pipeline_job(void) {
 	raiju_fixture_server_stop(server);
 }
 
+/**
+ * Pins the endpoint behind the UI's title-ID field: a job waiting for a title
+ * ID takes one and moves on to installing, a malformed ID is refused with
+ * `invalid`, another stage with `wrong_stage`, an unknown job with 404, and
+ * the ID reaches jobs.json. The stage is read from the response rather than
+ * the file: the worker keeps driving the job — this one fails at installing,
+ * nothing having been staged — so the file's stage is whatever the job has
+ * reached by the time it is read.
+ */
+static void a_waiting_job_takes_a_title_id(void) {
+	raiju_fixture_server *server = raiju_fixture_server_start();
+	CHECK(server != NULL);
+	raiju_fixture_server_set_jsonrpc(server, "{\"jsonrpc\":\"2.0\",\"id\":\"raiju\",\"result\":\"gid1\"}");
+	char aria2_url[128];
+	snprintf(aria2_url, sizeof aria2_url, "http://127.0.0.1:%u/jsonrpc", raiju_fixture_server_port(server));
+	raiju_fake_platform fake;
+	char directory[1024];
+	raiju_gateway *gateway = make_gateway(&fake, aria2_url, directory, sizeof directory);
+	CHECK(gateway != NULL);
+	char cookie[160];
+	pair_the_gateway(gateway, cookie, sizeof cookie);
+
+	const char *create = "{\"id\":\"0123456789abcdef\",\"uri\":\"http://example/dump.zip\"}";
+	raiju_http_request request;
+	raiju_http_response response;
+	memset(&request, 0, sizeof request);
+	request.method = "POST";
+	request.path = "/api/jobs";
+	request.cookie = cookie;
+	request.body = (const unsigned char *)create;
+	request.body_length = strlen(create);
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 201);
+	raiju_response_free(&response);
+
+	raiju_api *api = gateway->api;
+	pthread_mutex_lock(&api->queue_lock);
+	raiju_job *waiting = raiju_processor_find(&api->processor, "0123456789abcdef");
+	CHECK(waiting != NULL);
+	if (waiting != NULL) {
+		waiting->stage = RAIJU_STAGE_AWAITING_TITLE_ID;
+		waiting->title_source = RAIJU_TITLE_SOURCE_NONE;
+		waiting->title_id[0] = '\0';
+	}
+	pthread_mutex_unlock(&api->queue_lock);
+
+	const char *wrong = "{\"titleId\":\"ppsa12345\"}";
+	memset(&request, 0, sizeof request);
+	request.method = "POST";
+	request.path = "/api/jobs/0123456789abcdef/title";
+	request.cookie = cookie;
+	request.body = (const unsigned char *)wrong;
+	request.body_length = strlen(wrong);
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 400);
+	CHECK(strstr(raiju_strbuf_cstr(&response.body), "invalid") != NULL);
+	raiju_response_free(&response);
+
+	const char *title = "{\"titleId\":\"PPSA12345\"}";
+	memset(&request, 0, sizeof request);
+	request.method = "POST";
+	request.path = "/api/jobs/0123456789abcdef/title";
+	request.cookie = cookie;
+	request.body = (const unsigned char *)title;
+	request.body_length = strlen(title);
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 200);
+	const char *job = raiju_strbuf_cstr(&response.body);
+	CHECK(strstr(job, "\"titleId\":\"PPSA12345\"") != NULL);
+	CHECK(strstr(job, "\"stage\":\"installing\"") != NULL);
+	CHECK(strstr(job, "\"status\":\"active\"") != NULL);
+	raiju_response_free(&response);
+
+	memset(&request, 0, sizeof request);
+	request.method = "POST";
+	request.path = "/api/jobs/0123456789abcdef/title";
+	request.cookie = cookie;
+	request.body = (const unsigned char *)title;
+	request.body_length = strlen(title);
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 409);
+	CHECK(strstr(raiju_strbuf_cstr(&response.body), "wrong_stage") != NULL);
+	raiju_response_free(&response);
+
+	memset(&request, 0, sizeof request);
+	request.method = "POST";
+	request.path = "/api/jobs/nope/title";
+	request.cookie = cookie;
+	request.body = (const unsigned char *)title;
+	request.body_length = strlen(title);
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 404);
+	raiju_response_free(&response);
+
+	char jobs_path[1200];
+	snprintf(jobs_path, sizeof jobs_path, "%s/session/jobs.json", directory);
+	size_t saved_length = 0;
+	char *saved = raiju_read_file(jobs_path, 64 * 1024, &saved_length);
+	CHECK(saved != NULL);
+	if (saved != NULL) {
+		CHECK(strstr(saved, "\"titleId\":\"PPSA12345\"") != NULL);
+		free(saved);
+	}
+
+	raiju_gateway_destroy(gateway);
+	raiju_test_rmtree(directory);
+	raiju_fixture_server_stop(server);
+}
+
 void run_api_tests(void) {
 	RUN_TEST(status_is_public_and_reports_engine);
 	RUN_TEST(storage_reports_the_platform_figures);
@@ -736,4 +845,5 @@ void run_api_tests(void) {
 	RUN_TEST(jobs_reads_never_wait_for_the_queue);
 	RUN_TEST(the_pairing_code_is_loopback_only);
 	RUN_TEST(a_torrent_becomes_a_pipeline_job);
+	RUN_TEST(a_waiting_job_takes_a_title_id);
 }

@@ -141,6 +141,12 @@ export function createRaijuClient(options: RaijuClientOptions = {}) {
 				method: "POST",
 				json: { choice },
 			}),
+		/** Gives a job that is waiting for a title ID one, so it can install its payload. */
+		titleJob: (id: string, titleId: string) =>
+			json<ApiJob>(`/api/jobs/${encodeURIComponent(id)}/title`, {
+				method: "POST",
+				json: { titleId },
+			}),
 		/** One probe at a time: the gateway answers 503 `probe_busy` while another is running. */
 		probe: (uri: string) =>
 			json<ApiProbe>("/api/probe", { method: "POST", json: { uri } }),

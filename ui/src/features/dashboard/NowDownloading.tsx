@@ -15,6 +15,7 @@ import {
 import { StageProgress } from "./StageProgress";
 import { StageStepper } from "./StageStepper";
 import { TitleArt } from "./TitleArt";
+import { TitleIdPrompt } from "./TitleIdPrompt";
 
 type NowDownloadingProps = {
 	job: Job | undefined;
@@ -107,12 +108,7 @@ function ActiveJob({ job, actions }: { job: Job; actions: DashboardActions }) {
 					<ConflictPrompt job={job} onResolve={actions.resolveConflict} />
 				)}
 				{jobNeedsTitleId(job) && (
-					<p className="text-muted-foreground text-[13px]">
-						Rename the file after adding a{" "}
-						<span className="font-mono">PPSA#####</span> or{" "}
-						<span className="font-mono">CUSA#####</span> title ID, or add the
-						link again with one.
-					</p>
+					<TitleIdPrompt job={job} onSubmit={actions.resolveTitle} />
 				)}
 				<div className="flex flex-col-reverse gap-5 sm:flex-row sm:items-center">
 					{!waiting && (
