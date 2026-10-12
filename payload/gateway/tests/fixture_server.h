@@ -53,6 +53,12 @@ const char *raiju_fixture_server_last_method(const raiju_fixture_server *server)
 const char *raiju_fixture_server_last_host(const raiju_fixture_server *server);
 
 /**
+ * The body of the most recent request, or "", so a test can assert what the
+ * gateway sent to the engine.
+ */
+const char *raiju_fixture_server_last_body(const raiju_fixture_server *server);
+
+/**
  * How many requests have hit a path.
  */
 unsigned raiju_fixture_server_hits(const raiju_fixture_server *server, const char *path);

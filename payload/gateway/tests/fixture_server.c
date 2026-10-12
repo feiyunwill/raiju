@@ -34,6 +34,7 @@ struct raiju_fixture_server {
 	char last_range[64];
 	char last_method[8];
 	char last_host[128];
+	char last_body[8192];
 };
 
 static int send_all(int fd, const void *bytes, size_t length) {
@@ -172,7 +173,19 @@ static void handle_connection(raiju_fixture_server *server, int fd) {
 	char host[128] = "";
 	header_value(request, total, "Range", range, sizeof range);
 	header_value(request, total, "Host", host, sizeof host);
+	const char *separator = strstr(request, "\r\n\r\n");
+	size_t body_length = 0;
+	if (separator != NULL && separator + 4 <= request + total) {
+		body_length = (size_t)(request + total - (separator + 4));
+		if (body_length >= sizeof server->last_body) {
+			body_length = sizeof server->last_body - 1;
+		}
+	}
 	pthread_mutex_lock(&server->lock);
+	if (separator != NULL) {
+		memcpy(server->last_body, separator + 4, body_length);
+	}
+	server->last_body[body_length] = '\0';
 	snprintf(server->last_method, sizeof server->last_method, "%s", method);
 	snprintf(server->last_range, sizeof server->last_range, "%s", range);
 	snprintf(server->last_host, sizeof server->last_host, "%s", host);
@@ -202,6 +215,10 @@ static void handle_connection(raiju_fixture_server *server, int fd) {
 		return;
 	}
 	serve_file(fd, file, method, range[0] != '\0' ? range : NULL);
+}
+
+const char *raiju_fixture_server_last_body(const raiju_fixture_server *server) {
+	return server->last_body;
 }
 
 static void *server_thread(void *argument) {

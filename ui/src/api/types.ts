@@ -147,10 +147,15 @@ export type ApiPairing = {
 
 export type ConflictChoice = "rename" | "replace" | "cancel";
 
-/** `POST /api/jobs` body. `id` is the aria2 GID, so notifications map back to the job. */
+/**
+ * `POST /api/jobs` body. `id` is the aria2 GID, so notifications map back to the job.
+ * Exactly one of `uri` and `torrent` is required; `torrent` is the base64 contents
+ * of a `.torrent` file, which the install pipeline tracks exactly like a URL.
+ */
 export type ApiNewJob = {
 	id: string;
-	uri: string;
+	uri?: string;
+	torrent?: string;
 	destination?: string;
 	titleId?: string;
 	fileName?: string;

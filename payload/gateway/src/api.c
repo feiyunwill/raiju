@@ -18,6 +18,7 @@
 #include "raiju/auth.h"
 #include "raiju/fsutil.h"
 #include "raiju/proxy.h"
+#include "raiju/torrent.h"
 
 #ifndef RAIJU_VERSION
 #define RAIJU_VERSION "0.0.0"
@@ -1055,6 +1056,38 @@ static int handle_jobs_get(const raiju_http_request *request, raiju_http_respons
 	return 200;
 }
 
+/**
+ * Adds a torrent the client uploaded. Its contents go to the engine verbatim
+ * as base64 — the form aria2.addTorrent takes, and the form the caller has
+ * already validated — with the same gid and directory a URL's add carries.
+ * The empty array between them is aria2's positional web-seed list: without
+ * it the engine refuses the request's second parameter.
+ */
+static bool engine_add_torrent(raiju_gateway *gateway, const char *gid, const char *torrent, size_t torrent_length,
+                               const char *dir) {
+	raiju_strbuf document;
+	raiju_strbuf_init(&document);
+	raiju_strbuf_append(&document,
+	                    "{\"jsonrpc\":\"2.0\",\"id\":\"raiju\",\"method\":\"aria2.addTorrent\",\"params\":[\"");
+	raiju_strbuf_append_bytes(&document, torrent, torrent_length);
+	raiju_strbuf_append(&document, "\",[],{\"gid\":");
+	raiju_strbuf_append_json_string(&document, gid);
+	raiju_strbuf_append(&document, ",\"dir\":");
+	raiju_strbuf_append_json_string(&document, dir);
+	raiju_strbuf_append(&document, "}]}");
+	bool ok = false;
+	if (!document.failed) {
+		char response[2048];
+		int status = 0;
+		if (engine_json(gateway, raiju_strbuf_cstr(&document), document.length, response, sizeof response, &status) &&
+		    status == 200 && strstr(response, "\"result\"") != NULL) {
+			ok = true;
+		}
+	}
+	raiju_strbuf_free(&document);
+	return ok;
+}
+
 static int handle_jobs_create(const raiju_http_request *request, raiju_http_response *response, void *context) {
 	raiju_api *api = context;
 	raiju_gateway *gateway = api->gateway;
@@ -1062,13 +1095,42 @@ static int handle_jobs_create(const raiju_http_request *request, raiju_http_resp
 	size_t length = request->body_length;
 	char id[RAIJU_JOB_ID_MAX + 1];
 	char uri[2048];
+	char torrent_name[RAIJU_JOB_NAME_MAX];
+	const char *torrent_value = NULL;
+	const char *torrent = NULL;
+	size_t torrent_length = 0;
 	char destination[RAIJU_PATH_MAX];
 	char title_id[RAIJU_TITLE_ID_LEN + 1];
 	char file_name[RAIJU_JOB_NAME_MAX];
 	char conflict[16];
 	char kind[16];
-	if (!json_string(body, length, "id", id, sizeof id) || !json_string(body, length, "uri", uri, sizeof uri)) {
-		raiju_response_error(response, 400, "id and uri are required");
+	if (!json_string(body, length, "id", id, sizeof id)) {
+		raiju_response_error(response, 400, "id is required");
+		return 400;
+	}
+	bool has_uri = json_string(body, length, "uri", uri, sizeof uri);
+	torrent_value = json_value(body, length, "torrent");
+	if (torrent_value != NULL && *torrent_value == '"') {
+		const char *end = torrent_value + 1;
+		while (end < body + length && *end != '"' && *end != '\\') {
+			end++;
+		}
+		if (end < body + length && *end == '"') {
+			torrent = torrent_value + 1;
+			torrent_length = (size_t)(end - torrent);
+		}
+	}
+	bool has_torrent = torrent != NULL;
+	if (has_uri == has_torrent) {
+		raiju_response_error(response, 400, "exactly one of uri and torrent is required");
+		return 400;
+	}
+	if (has_torrent && !raiju_torrent_name_from_base64(torrent, torrent_length, torrent_name, sizeof torrent_name)) {
+		raiju_response_error(response, 400, "torrent is not base64, or carries no name");
+		return 400;
+	}
+	if (has_torrent && !raiju_job_file_name_valid(torrent_name)) {
+		raiju_response_error(response, 400, "torrent name is not usable");
 		return 400;
 	}
 	if (!raiju_job_id_valid(id)) {
@@ -1085,6 +1147,9 @@ static int handle_jobs_create(const raiju_http_request *request, raiju_http_resp
 	title_id[0] = '\0';
 	json_string(body, length, "titleId", title_id, sizeof title_id);
 	file_name[0] = '\0';
+	if (has_torrent) {
+		snprintf(file_name, sizeof file_name, "%s", torrent_name);
+	}
 	json_string(body, length, "fileName", file_name, sizeof file_name);
 	conflict[0] = '\0';
 	json_string(body, length, "conflict", conflict, sizeof conflict);
@@ -1144,7 +1209,9 @@ static int handle_jobs_create(const raiju_http_request *request, raiju_http_resp
 	}
 	char downloads[RAIJU_PATH_MAX];
 	snprintf(downloads, sizeof downloads, "%s/downloads", gateway->config.data_dir);
-	if (!engine_add_uri(gateway, id, uri, downloads)) {
+	bool added = has_torrent ? engine_add_torrent(gateway, id, torrent, torrent_length, downloads)
+	                         : engine_add_uri(gateway, id, uri, downloads);
+	if (!added) {
 		raiju_processor_discard(&api->processor, id);
 		pthread_mutex_unlock(&api->queue_lock);
 		raiju_response_error(response, 502, "engine unreachable");

@@ -17,6 +17,8 @@ int main(void) {
 	run_allowlist_tests();
 	printf("proxy\n");
 	run_proxy_tests();
+	printf("torrent\n");
+	run_torrent_tests();
 	printf("router\n");
 	run_router_tests();
 	printf("fetch\n");

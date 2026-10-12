@@ -658,6 +658,71 @@ static void the_pairing_code_is_loopback_only(void) {
 	raiju_test_rmtree(directory);
 }
 
+static void a_torrent_becomes_a_pipeline_job(void) {
+	raiju_fixture_server *server = raiju_fixture_server_start();
+	CHECK(server != NULL);
+	raiju_fixture_server_set_jsonrpc(server, "{\"jsonrpc\":\"2.0\",\"id\":\"raiju\",\"result\":\"gid1\"}");
+	char aria2_url[128];
+	snprintf(aria2_url, sizeof aria2_url, "http://127.0.0.1:%u/jsonrpc", raiju_fixture_server_port(server));
+	raiju_fake_platform fake;
+	char directory[1024];
+	raiju_gateway *gateway = make_gateway(&fake, aria2_url, directory, sizeof directory);
+	CHECK(gateway != NULL);
+	char cookie[160];
+	pair_the_gateway(gateway, cookie, sizeof cookie);
+
+	const char *torrent = "ZDQ6aW5mb2Q0Om5hbWU0OmR1bXBlZQ==";
+	char create[512];
+	snprintf(create, sizeof create, "{\"id\":\"0123456789abcdef\",\"torrent\":\"%s\",\"destination\":\"/data/homebrew\"}",
+	         torrent);
+	raiju_http_request request;
+	raiju_http_response response;
+	memset(&request, 0, sizeof request);
+	request.method = "POST";
+	request.path = "/api/jobs";
+	request.cookie = cookie;
+	request.body = (const unsigned char *)create;
+	request.body_length = strlen(create);
+	raiju_response_init(&response);
+	CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 201);
+	const char *job = raiju_strbuf_cstr(&response.body);
+	CHECK(strstr(job, "\"id\":\"0123456789abcdef\"") != NULL);
+	CHECK(strstr(job, "\"sourceName\":\"dump\"") != NULL);
+	CHECK(strstr(job, "\"uiStage\":\"download\"") != NULL);
+	raiju_response_free(&response);
+
+	const char *sent = raiju_fixture_server_last_body(server);
+	CHECK(strstr(sent, "aria2.addTorrent") != NULL);
+	CHECK(strstr(sent, "\"params\":[\"token:") != NULL);
+	CHECK(strstr(sent, "ZDQ6aW5mb2Q0Om5hbWU0OmR1bXBlZQ==\",[],{\"gid\":\"0123456789abcdef\"") != NULL);
+	CHECK(strstr(sent, "/downloads") != NULL);
+	CHECK(strstr(sent, torrent) != NULL);
+
+	const char *refused[] = {
+	    "{\"id\":\"t2\",\"uri\":\"http://example/x.zip\",\"torrent\":\"ZDQ6aW5mb2Q0Om5hbWU0OmR1bXBlZQ==\"}",
+	    "{\"id\":\"t3\"}",
+	    "{\"id\":\"t4\",\"torrent\":\"not base64!\"}",
+	    "{\"id\":\"t5\",\"torrent\":\"ZDQ6aW5mb2Rl\"}",
+	    "{\"id\":\"t6\",\"torrent\":\"ZDQ6aW5mb2Q0Om5hbWU5Oi4uL2VzY2FwZWVl\"}",
+	    "{\"id\":\"t7\",\"torrent\":\"ZDQ6aW5mb2Q0Om5hbWU0OmR1bXBlZQ==\",\"fileName\":\"../escape\"}",
+	};
+	for (size_t i = 0; i < sizeof refused / sizeof refused[0]; i++) {
+		memset(&request, 0, sizeof request);
+		request.method = "POST";
+		request.path = "/api/jobs";
+		request.cookie = cookie;
+		request.body = (const unsigned char *)refused[i];
+		request.body_length = strlen(refused[i]);
+		raiju_response_init(&response);
+		CHECK_INT(raiju_gateway_handle(gateway, &request, &response), 400);
+		raiju_response_free(&response);
+	}
+
+	raiju_gateway_destroy(gateway);
+	raiju_test_rmtree(directory);
+	raiju_fixture_server_stop(server);
+}
+
 void run_api_tests(void) {
 	RUN_TEST(status_is_public_and_reports_engine);
 	RUN_TEST(storage_reports_the_platform_figures);
@@ -670,4 +735,5 @@ void run_api_tests(void) {
 	RUN_TEST(every_new_endpoint_needs_a_token);
 	RUN_TEST(jobs_reads_never_wait_for_the_queue);
 	RUN_TEST(the_pairing_code_is_loopback_only);
+	RUN_TEST(a_torrent_becomes_a_pipeline_job);
 }

@@ -50,6 +50,7 @@ GATEWAY_SOURCES := \
 	$(GATEWAY_DIR)/src/http.c \
 	$(GATEWAY_DIR)/src/gateway.c \
 	$(GATEWAY_DIR)/src/local_code.c \
+	$(GATEWAY_DIR)/src/torrent.c \
 	$(GATEWAY_DIR)/src/server.c
 
 PROCESSOR_SOURCES := $(wildcard $(PROCESSOR_DIR)/src/*.c)

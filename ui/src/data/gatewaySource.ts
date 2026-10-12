@@ -348,11 +348,19 @@ export function createGatewaySource(options: {
 			: noticeText(error);
 	}
 
-	async function addJob(link: string, options: AddOptions): Promise<void> {
+	/**
+	 * Adds a download the pipeline owns: a URL, or the base64 contents of a `.torrent`. Either way the
+	 * job carries the id aria2's notifications come back with, plus the same destination, title ID,
+	 * archive and conflict options.
+	 */
+	async function addJob(
+		body: { uri: string } | { torrent: string },
+		options: AddOptions,
+	): Promise<void> {
 		try {
 			await client.addJob({
 				id: newJobId(),
-				uri: link,
+				...body,
 				destination: options.destination,
 				titleId: options.titleId,
 				keepArchive: options.keepArchive,
@@ -583,26 +591,17 @@ export function createGatewaySource(options: {
 			},
 			remove: (id) => void removeJob(id),
 			addLinks: (links, options) => {
-				Promise.all(links.map((link) => addJob(link, options)))
+				Promise.all(links.map((link) => addJob({ uri: link }, options)))
 					.then(() => refresh())
 					.catch((error) => set({ ...state, notice: actionError(error) }));
 			},
 			addTorrents: (files, options) => {
 				Promise.all(
 					files.map(async (file) =>
-						engine.addTorrent(base64(await file.arrayBuffer()), [], {
-							dir: options.destination,
-						}),
+						addJob({ torrent: base64(await file.arrayBuffer()) }, options),
 					),
 				)
-					.then(() => {
-						set({
-							...state,
-							notice:
-								"Torrent uploads download through the engine but aren't tracked by the install pipeline yet.",
-						});
-						return refresh();
-					})
+					.then(() => refresh())
 					.catch((error) => set({ ...state, notice: noticeText(error) }));
 			},
 			setSpeedLimit: (id, bytesPerSecond) => {

@@ -79,6 +79,11 @@ void run_allowlist_tests(void);
 void run_proxy_tests(void);
 
 /**
+ * Runs the torrent name reading tests.
+ */
+void run_torrent_tests(void);
+
+/**
  * Runs the routing, auth gate and static serving tests.
  */
 void run_router_tests(void);

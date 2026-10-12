@@ -54,7 +54,8 @@ CORE_SOURCES := \
 	src/supervisor.c \
 	src/http.c \
 	src/gateway.c \
-	src/local_code.c
+	src/local_code.c \
+	src/torrent.c
 SERVER_SOURCES := src/server.c
 MAIN_SOURCES := src/main.c
 TEST_SOURCES := $(wildcard tests/test_*.c)
