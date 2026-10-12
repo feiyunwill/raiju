@@ -95,7 +95,7 @@ $(ASSETS_OBJECT): $(ASSETS_TABLE)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(WARNINGS) $(CFLAGS) -c -o $@ $<
 
-$(ASSETS_TABLE): $(GEN_EMBED_ASSETS)
+$(ASSETS_TABLE): $(GEN_EMBED_ASSETS) $(shell find $(EMBED_DIR) -type f 2>/dev/null)
 	@mkdir -p $(dir $@)
 	$(GEN_EMBED_ASSETS) $(EMBED_DIR) $@
 

@@ -127,11 +127,11 @@ $(GEN_EMBED_ASSETS): tools/gen_assets.c
 	@mkdir -p $(dir $@)
 	$(CC) $(WARNINGS) $(CFLAGS) -o $@ $<
 
-$(ASSETS_TABLE): $(GEN_EMBED_ASSETS)
+$(ASSETS_TABLE): $(GEN_EMBED_ASSETS) $(shell find $(EMBED_DIR) -type f 2>/dev/null)
 	@mkdir -p $(dir $@)
 	$(GEN_EMBED_ASSETS) $(EMBED_DIR) $@
 
-$(ASSETS_FIXTURE): $(GEN_EMBED_ASSETS)
+$(ASSETS_FIXTURE): $(GEN_EMBED_ASSETS) $(shell find $(FIXTURE_EMBED) -type f 2>/dev/null)
 	@mkdir -p $(dir $@)
 	$(GEN_EMBED_ASSETS) $(FIXTURE_EMBED) $@
 
